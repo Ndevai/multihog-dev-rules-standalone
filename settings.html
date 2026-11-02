@@ -1,0 +1,32 @@
+<div class="rules-engine-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>Rules Engine</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <label class="checkbox_label"><input type="checkbox" id="rules_engine_enabled" /><span>Rules engine: code decides outcomes through tool calls, the narrator writes them</span></label>
+            <label class="checkbox_label"><input type="checkbox" id="rules_engine_question_pass" /><span>Question pass: before each reply, a model call names the outcomes in doubt and the engine decides them first</span></label>
+            <label class="checkbox_label"><input type="checkbox" id="rules_engine_rule_check" /><span>Rule check: after each reply, a model call compares it with the engine's results and redoes it once when it bends one</span></label>
+            <label class="checkbox_label"><input type="checkbox" id="rules_engine_structured" /><span>Structured replies: the narrator writes one passage per decided result plus scenery, and names what is left open for the next turn; the reply is shown as prose</span></label>
+            <label for="rules_engine_profile"><small>Connection for the question pass and rule check</small></label>
+            <select id="rules_engine_profile" class="text_pole"><option value="">Same as the chat</option></select>
+            <label for="rules_engine_max_tokens"><small>Reply length for those calls, tokens (empty: the connection's own)</small></label>
+            <input id="rules_engine_max_tokens" class="text_pole" type="number" min="0" step="100" />
+            <label for="rules_engine_effort"><small>Thinking for those calls (GLM 5.3 reads low or high; anything else is maximum). Low: 10 eval scenes in 6 min, 9 right; maximum: 15 min per scene, 3 right.</small></label>
+            <select id="rules_engine_effort" class="text_pole"><option value="low">low</option><option value="high">high</option><option value="">model default</option></select>
+            <label for="rules_engine_time"><small>Story time of this chat (1850-03-14 18:40, or Day 3 07:15); PassTime moves it on</small></label>
+            <input id="rules_engine_time" class="text_pole" type="text" placeholder="1850-03-14 18:40" />
+            <hr />
+            <b>World book</b>
+            <small>What this card's world has that real history lacks. Everything else stays as in real history.</small>
+            <div id="rules_engine_world_list"></div>
+            <div class="flex-container">
+                <input id="rules_engine_world_line" class="text_pole flex1" type="text" placeholder="orcs in London since the 900s" />
+                <div id="rules_engine_world_fill" class="menu_button">Fill</div>
+            </div>
+            <hr />
+            <label class="checkbox_label"><input type="checkbox" id="rules_engine_suggest" /><span>Rules as suggestions: for a world far from real history. The engine's outcomes are offered to the narrator as likely, the story and world book decide. While on, it turns off the rule check and structured replies, whatever their boxes say</span></label>
+        </div>
+    </div>
+</div>

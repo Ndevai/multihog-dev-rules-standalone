@@ -1,0 +1,171 @@
+// Types shared across the rules engine: the per-character body state the engine keeps in chat metadata.
+import type { Part } from './df/raws.js';
+
+/** A random number source returning values in [0, 1): Math.random or a seeded generator. */
+export type Rng = () => number;
+/** A standard normal draw. */
+export type Gauss = () => number;
+
+export type WoundType = 'cut' | 'puncture' | 'bite' | 'blunt' | 'fracture' | 'severed' | 'burn' | 'frostbite';
+export type BurnDepth = 'superficial' | 'partial' | 'deep_partial' | 'full';
+export type Vessel = 'femoral' | 'limb_artery' | 'small';
+
+/** What addWound needs to record a wound on a DF part. */
+export interface WoundSpec {
+    part: Part; type: WoundType; depth?: BurnDepth; vessel?: Vessel; functionLost?: boolean; permanent?: boolean;
+    healFactor?: number; fracture?: 'spiral' | 'transverse'; openGrade?: string; open?: boolean;
+}
+export interface Fracture { kind: string | null; joins: number | null; full: number | null; crooked: boolean; never: boolean }
+export interface Wound {
+    id: number; part: string; pid: string; type: WoundType; bleed: number; age: number; cleanedAt: number | null;
+    infection: boolean | null; splinted: boolean; heals: number | null; healed: boolean;
+    depth?: BurnDepth | null; vessel?: Vessel; clotIn?: number | null; functionLost?: boolean; permanent?: boolean; severed?: boolean;
+    fracture?: Fracture; openGrade?: string; open?: boolean;
+    /** Pulse Hemorrhage severity (0–1) fixed when Pulse first ran the wound. */
+    pulseSev?: number;
+}
+
+/** Magic network of rule 576: capacity C, nodes N, reserve R, efficiency P, today's flow F and exercise E. */
+export interface Net { C: number; N: number; R: number; P: number; F: number; E: number; width: number; maxToday: boolean }
+
+export interface Needs {
+    waterL: number; kcal: number; awake: number; slept: number; waterDeath: number | null; foodDeath: number | null;
+    work?: number; alcohol?: number; debt?: number;
+    /** Minutes of work since the last break of 15 min or more, the current break's length, and minutes worked since the last sleep. */
+    onTask?: number; restRun?: number; duty?: number;
+    /** Energy eaten beyond the day's need, kcal (body-engine.ts settleMass). */
+    surplus?: number;
+    /** Alcohol drunk and not yet absorbed, as the blood alcohol it will add (%), and minutes since the last meal. */
+    gut?: number; sinceMeal?: number;
+}
+
+/** Immersion: water temperature, speed, which of the 17 JOS-3 segments are under, and how the person is in it. */
+export interface WaterState {
+    tc: number; speed: number; segs: boolean[]; suit: boolean; swimming: boolean; afloat: boolean; deep: boolean;
+    swimMin?: number; swimLimit?: number;
+}
+/** The air a person is in, as set by setEnvironment. clo is local clo per JOS-3 segment. */
+export interface Env {
+    tdb: number; tr: number; rh: number; v: number; wind10: number; clo: number[]; met?: number | null; posture?: 'standing' | 'sitting' | 'lying' | null;
+    co: number; smoke: boolean; faceBare: boolean; handsBare: boolean; water: WaterState | null;
+}
+/** Thermal state: JOS-3 node temperatures (humans) or the endotherm core (other warm-blooded creatures). */
+export interface ThermalState {
+    params?: { height: number; weight: number; age: number; sex: string };
+    t?: number[] | null; freezeC?: number | null; frozen?: string[]; bareDose?: number; bareQ?: number | null;
+    core?: number; skinMin?: number; coldest?: string; stageCore?: number; set?: number;
+}
+export interface Altitude {
+    m: number; sudden: boolean; decompression: boolean; min: number; ams: boolean | null; oedema: boolean | null;
+    hace?: boolean; hape?: boolean; acc0?: number; amsEnd?: number; hapeAt?: number | null; haceDeath?: number; hapeDeath?: number;
+    tuc?: number | null;
+}
+/** A course that may end in death at deathMin minutes: sepsis, peritonitis. */
+export interface Course { fatal: boolean; min: number; deathMin: number; treated?: boolean; repaired?: boolean }
+export interface VenomSymptom { kind: string; sev?: number; start: number; peak: number; end: number }
+export interface VenomCourse {
+    species: string; kind: 'hemo' | 'neuro' | 'pain' | 'df'; fatal: boolean; min: number;
+    mg?: number; ratio?: number; collapse?: number | null; shock?: number | null; death?: number | null;
+    symptoms?: VenomSymptom[]; part?: string;
+}
+/** Per-person overrides for reaction timing (BodyStrike defence). */
+export interface BodyTiming { nerve_mps?: number; limb_m?: number; sense_s?: Record<string, number>; decide_s?: number }
+
+/** One character's body as the engine keeps it. */
+export interface Person {
+    /** Named spot the character is at (actions.ts), e.g. "John's house: living room". */
+    at?: string;
+    /** Sitting or standing, as the last Act left them (actions.ts). */
+    posture?: 'sitting' | 'standing' | 'lying';
+    /** Height above the ground the character stands at, m, when a climb set it: the top of a wall climbed, 0 at its foot after a
+     *  failed climb. Cleared by a walk or a fall (rules-tools.ts BodyCheck, BodyFall, Act). */
+    raised_m?: number;
+    /** Standing height, cm, as BodySize drew it (sizes.ts scales a person's seen breadth by it). */
+    heightCm?: number;
+    /** The room whose air this person last breathed (rooms.ts). */
+    airFrom?: string | null;
+    species: string; mass: number; lost: number; red: number; wounds: Wound[]; nextId: number;
+    dead: string | null; deathIn: number | null; deathMode?: 'bleeding' | 'stopped'; minute: number; net: Net;
+    age?: number; sex?: string; region?: string | null; body?: BodyTiming;
+    /** The country the character comes from, when the story gives one other than the scene's (swimming, trust games). */
+    country?: string;
+    /** Whether a room's fire set the character's air temperature at the last minute (rooms.ts feelHeat). */
+    fireHeat?: boolean;
+    unconscious?: string | null; apnea?: number | null; drowning?: boolean; paralysed?: boolean; exhausted?: boolean;
+    needs?: Needs; env?: Env | null; thermal?: ThermalState; weather?: string | null; workMet?: number | null;
+    /** Pulse: minute-by-minute flow and vital signs prepared for the coming PassTime, and wounds already applied to its engine. */
+    pulse?: { track: { rate: number; hr: number; map: number; sys: number; dia: number; rr: number; spo2: number; dies?: boolean }[]; at: number; table?: boolean } | null; pulseWounds?: number[];
+    /** A bleed run from the precomputed Pulse tables: its wounds, limb, severity and the minute reached. */
+    pulseTab?: { ids: string; limb: 'Leg' | 'Arm' | 'Aorta' | 'Muscle'; sev: number; minute: number } | null;
+    /** Vital signs at the end of the last Pulse minute. */
+    pulseLast?: { hr: number; map: number; sys: number; dia: number; rr: number; spo2: number } | null;
+    altitude?: Altitude | null; acclim?: number; baseAlt?: number | null;
+    co?: { hb: number; o2: 'air' | 'oxygen' | 'hyperbaric' } | null; venom?: VenomCourse | null;
+    sepsis?: Course | null; peritonitis?: Course | null;
+    burnDeath?: { p: number; fatal: boolean; min: number; deathMin: number | null }; burnO?: number[]; burnt?: Record<string, BurnDepth>; inhalation?: boolean;
+    heatStroke?: { min: number; exertional: boolean; fatal?: boolean; deathMin?: number } | null;
+    swimFailed?: boolean; canSwim?: boolean; underS?: number; breathHold?: number | null;
+    fitZ?: number; gripZ?: number; runZ?: number; jumpZ?: number; liftZ?: number;
+    /** Minutes left of a knockout or a choke (body-engine.ts advance); minutes since waking from a knockout (concussion). */
+    koLeft?: number; concussedMin?: number;
+    /** Story minute on the local clock, set by each rule call and moved with the body's minutes (body clock for alertness). */
+    clockMin?: number;
+    /** General reasoning ability, a z-score among people, drawn once (WorkOut). */
+    gZ?: number;
+    /** The light the eyes were last at (lux) and the story minute they left it (vision.ts adaptedLux). */
+    eye?: { lux: number; t: number };
+    /** Feelings still running (Appraise): the OCC type, what it is about, minutes left. */
+    feelings?: { type: string; about?: string; left: number }[];
+    /** Where the person's BMI sits among their sex in their country and year (BodySize, or a build the story states). */
+    bmiZ?: number;
+    /** The activity under way, as BodyEnvironment named it (mood.ts). */
+    doing?: string;
+    /** Working-memory span, chunks (knowledge.ts heldOfMessage), drawn once. */
+    span?: number;
+    /** Body stores spent by the food deficit (body-engine.ts settleMass): mass before the deficit, fat and glycogen left, the
+     * deficit already taken from them (kcal). */
+    stores?: { mass0: number; fatKg: number; glycogenG: number; applied: number; lethalBmi?: number };
+    /** Languages the character knows, lower case; absent when the story has not stated them. */
+    languages?: string[];
+    /** How the character produces voice: absent = normal; 'whisper' = no vocal-fold vibration. */
+    voice?: 'whisper';
+    /** The last speech this character heard: from whom, at what speech-to-noise ratio (dB). */
+    heard?: { from: string; snr: number; whisper?: boolean };
+}
+
+/** A fixed fact of the story and who knows it; `from` maps a normalized knower name to how they learned it. */
+export interface Fact { id: number; text: string; imp?: number; knowers: string[]; everyone: boolean; seq?: number; from?: Record<string, string>; secret?: boolean; at?: Record<string, number>; times?: Record<string, number[]>; ageAt?: Record<string, number>; kind?: 'event' | 'knowledge' }
+
+/** Rules-engine state of one chat (chatMetadata.rulesEngine.state). */
+export interface RuleState {
+    people?: Record<string, Person>;
+    facts?: Fact[]; factSeq?: number;
+    /** Trust between two characters after a betrayal, by "truster→betrayer" (social.ts trustAgain). */
+    trust?: Record<string, { lied: boolean; repair: string; kept: number }>;
+    /** Who has looked at whom (Look with target_who): when, story minutes, and whether the face was made out; for lineups. */
+    sightings?: Record<string, Record<string, { t: number | null; identified: boolean; stressed?: boolean; weapon?: boolean }>>;
+    /** The last small favour asked of each person (SocialResponse), for a bigger one later: agreed, story minutes, who asked. */
+    favours?: Record<string, { agreed: boolean; t: number | null; by: string | null }>;
+    /** Listener|speaker pairs who have talked (Communicate): a baseline for judging lies. */
+    acquainted?: Record<string, boolean>;
+    /** Story clock: the time set with /rules-time (minutes, clock.ts) and the minutes PassTime has run since. */
+    clock?: { t: number; add: number; sec?: number };
+    /** Distances between named spots, metres, keyed 'a|b' with a < b (actions.ts); recorded once, reused after. */
+    links?: Record<string, number>;
+    /** Air of rooms by spot name (rooms.ts). */
+    rooms?: Record<string, import('./rooms.js').Room>;
+    /** Positions of spots and outlines of rooms (map.ts). */
+    map?: import('./map.js').MapState;
+    /** Open doorways between rooms (rooms.ts). */
+    openings?: import('./rooms.js').Opening[];
+    latitude?: number;
+    /** Big Five place of each character, z-scores by trait (acts.ts), drawn once when first needed. */
+    traits?: Record<string, Record<string, number>>;
+    longitude?: number;
+    /** What the scene has fixed for every tool: the last place given (a weather place key), its label and country. */
+    setting?: { place?: string; label?: string; country?: string | null };
+    /** What each character carries, by holder name (possessions.ts). */
+    items?: Record<string, { item: string; qty: number; owner?: string }[]>;
+    /** Holders who give only what is on record: player characters after a Claim about what they have. */
+    accounted?: string[];
+}

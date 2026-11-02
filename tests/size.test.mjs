@@ -1,0 +1,12 @@
+import { sizeOf, SIZE_KINDS } from '../src/rules/sizes.js';
+let miss = 0, n = 0; const ok = (c, m) => { n++; if (!c) { miss++; console.log('MISS', m); } };
+ok(sizeOf('a person', { sex: 'male' })?.m === 0.509, 'man ANSUR bideltoid');
+ok(sizeOf('a person', { sex: 'female' })?.m === 0.45, 'woman ANSUR bideltoid');
+ok(sizeOf('a person')?.m === 0.48, 'unknown sex: mean of medians');
+ok(sizeOf('a head or face', { sex: 'female' })?.m === 0.147, 'female head');
+ok(sizeOf('a person', { sex: 'male', heightCm: 160 })?.m === Math.round(0.509 * 160 / 175.5 * 1000) / 1000, 'scaled by height');
+ok(sizeOf('a penny (British, 1860–1970)')?.m === 0.0308, 'penny');
+ok(sizeOf('a door or doorway')?.m === 0.762, 'door');
+ok(sizeOf('something else (give size_m)') === null, 'other left to plan');
+ok(SIZE_KINDS.every(k => k === 'something else (give size_m)' || sizeOf(k)), 'every kind has a size');
+console.log(`size: ${n - miss} of ${n}`); process.exitCode = miss ? 1 : 0; // exitCode lets output queued for a pipe finish (process.exit() can cut it)

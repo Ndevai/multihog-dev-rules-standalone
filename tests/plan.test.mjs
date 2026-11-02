@@ -1,0 +1,96 @@
+// The keyed plan (src/rules/plan-schema.ts): one call per tool and subject, read back as the list the pass runs.
+await import('../tools/st-harness.mjs');
+const T = await import('../src/rules/rules-tools.js');
+T.registerRulesTools(true);
+const P = await import('../src/rules/plan-schema.js');
+const Q = await import('../src/rules/question-pass.js');
+let miss = 0;
+const check = (label, ok, got) => { if (!ok) { miss++; console.log(`MISS ${label}: ${JSON.stringify(got)}`); } };
+const text = `QUESTIONS\n- how long\n{"calls":{"Weather":{"latitude":53.9,"longitude":-1.1},"Act":{"Mara":{"action":"creeps across the lawn","distance_m":12}},"Price":{"beer (litre)":{"question":"price of goods","quantity":0.568,"city":"London","year":1820},"daily wage":{"city":"London","year":1820}},"Communicate":{"Tom":{"listener":"the innkeeper","message":"a pint"}}},"then":[]}`;
+const calls = Q.rawCalls(text);
+check('order and count', calls.map(c => c.tool).join(',') === 'Weather,Act,Price,Price,Communicate', calls);
+check('subject goes back into its argument', calls[1].args.who === 'Mara' && calls[4].args.speaker === 'Tom', calls);
+check('Price keyed by good', calls[2].args.item === 'beer (litre)', calls[2]);
+check('Price keyed by question', calls[3].args.question === 'daily wage' && !calls[3].args.item, calls[3]);
+check('list form still reads', Q.rawCalls('{"calls":[{"tool":"Act","args":{"who":"Tom","action":"sits down"}}]}').length === 1, null);
+// The schema: one entry per offered tool; a keyed tool's arguments leave out the key and its requirement.
+const s = P.planSchema(new Set(['Act', 'Weather', 'Communicate']));
+const c = s.properties.calls;
+check('offered tools only', Object.keys(c.properties).sort().join(',') === 'Act,Communicate,Weather', Object.keys(c.properties));
+check('keyed by speaker', c.properties.Communicate.additionalProperties && !('speaker' in c.properties.Communicate.additionalProperties.properties) && !c.properties.Communicate.additionalProperties.required.includes('speaker'), c.properties.Communicate);
+check('Weather takes its arguments directly', 'latitude' in c.properties.Weather.properties, c.properties.Weather);
+check('schema is JSON', JSON.parse(JSON.stringify(s)).required[0] === 'calls', null);
+// Person keys: names and roles only; the story's people as fixed keys; a follow-on round's required tools.
+const re = new RegExp(P.PERSON_KEY);
+for (const k of ['Mara', 'Will Doyle', 'the innkeeper', 'the person inside the house', 'the whispering man 1']) check(`key accepted: ${k}`, re.test(k), k);
+for (const k of ['Tom to the innkeeper', 'Mara sees who is inside', 'who:Mara', 'innkeeper']) check(`key refused: ${k}`, !re.test(k), k);
+const s2 = P.planSchema(new Set(['Look', 'Choose', 'Price']), { people: ['Mara', 'whispering man 1'], require: ['Choose'] });
+check('known people are fixed keys', 'Mara' in s2.properties.calls.properties.Look.properties && 'whispering man 1' in s2.properties.calls.properties.Look.properties, Object.keys(s2.properties.calls.properties.Look.properties));
+// The endpoint refuses propertyNames (tools/probe-schema.mjs): no schema the plan sends uses it.
+check('no propertyNames', !JSON.stringify(P.planSchema(undefined, { people: ['Mara'] })).includes('propertyNames'), null);
+// A description in a person's place is held back at the engine's door with what to write instead.
+check('description held back', Q.badPeople({ tool: 'Look', args: { viewer: 'Mara sees who is inside' } }).join() === 'viewer', null);
+check('role passes', Q.badPeople({ tool: 'Communicate', args: { speaker: 'the innkeeper', listener: 'Tom' } }).length === 0, null);
+check('required tool', s2.properties.calls.required.includes('Choose') && s2.properties.calls.properties.Choose.minProperties === 1, s2.properties.calls.required);
+check('Price keys are the listed goods', 'beer (litre)' in s2.properties.calls.properties.Price.properties && s2.properties.calls.properties.Price.additionalProperties === false, Object.keys(s2.properties.calls.properties.Price.properties).slice(0, 3));
+const p2 = Q.rawPlan('{"calls":{},"then":[{"question":"Does he have apples left?","tool":"Choose"}]}');
+check('then with its tool', p2.then[0] === 'Does he have apples left?' && p2.thenTools[0] === 'Choose', p2);
+// The scene's people: cast, roles the text names, each of a group of two, names inside a sentence.
+const SP = await import('../src/rules/scene-people.js');
+const sp = SP.scenePeople(['Two men at the next table are whispering. I call to the innkeeper.', 'The maid set down a cup. Josiah Crake laughed in London.'], ['Tom']);
+for (const n of ['Tom', 'the innkeeper', 'the first man', 'the second man', 'the maid', 'Josiah Crake']) check(`scene person: ${n}`, sp.includes(n), sp);
+for (const n of ['London', 'the window', 'the next table']) check(`not a person: ${n}`, !sp.includes(n), sp);
+// Closed keys: a person-keyed tool takes the scene's people only; NewCharacter also a new one; person values are enums.
+const s3 = P.planSchema(new Set(['Look', 'NewCharacter', 'Communicate']), { people: sp });
+check('Look keys closed', s3.properties.calls.properties.Look.additionalProperties === false, null);
+check('NewCharacter takes a new key', typeof s3.properties.calls.properties.NewCharacter.additionalProperties === 'object', null);
+check('listener is one of the people', s3.properties.calls.properties.Communicate.properties.Tom.properties.listener.enum.includes('the innkeeper'), null);
+// Act times walking and posture; a climb in its words goes to BodyCheck.
+const { ctx } = await import('../tools/st-harness.mjs'); ctx.chatMetadata = {}; ctx.chat = [{ is_user: true, mes: 'x' }];
+check('Act passes a climb on', /decided by BodyCheck/.test(String(await T.REGISTRY.get('Act').exec({ level: 'a climb, jump or drop', who: 'Mara', action: 'climbs the wall and drops down into the garden', distance_m: 3 }))), null);
+check('Act walks', /walks/.test(String(await T.REGISTRY.get('Act').exec({ level: 'on the level, stairs or a change of posture', who: 'Mara', action: 'slips along the wall into the shadow of the hedge', distance_m: 5 }))), null);
+const sp2 = SP.scenePeople(["A dog strained at its chain by the merchant's house; the house was dark. The seamstress slept."], ['Mara']);
+check('a dog is "the dog"', sp2.includes('the dog'), sp2);
+check('the house is no person', !sp2.includes('the house') && !sp2.includes("the merchant's house"), sp2);
+check('a speaker\'s listeners leave the speaker out', !s3.properties.calls.properties.Communicate.properties.Tom.properties.listener.enum.includes('Tom'), null);
+ctx.chatMetadata = {}; ctx.chat = [{ is_user: true, mes: 'x' }];
+check('a maidservant is a woman', /woman|girl/.test(String(await T.REGISTRY.get('NewCharacter').exec({ who: 'the maidservant', occupation: 'maidservant' }))), null);
+const s4 = P.planSchema(new Set(['BodyFall', 'Look']), { people: ['Mara', 'the man'], used: new Map([['BodyFall', new Set(['Mara'])]]) });
+check('a later round leaves out a key already run', !('Mara' in s4.properties.calls.properties.BodyFall.properties) && 'Mara' in s4.properties.calls.properties.Look.properties, Object.keys(s4.properties.calls.properties.BodyFall.properties));
+// Act's action begins with a motion or posture verb, by the schema's pattern.
+const actArgs = P.planSchema(new Set(['Act']), { people: ['Mara'] }).properties.calls.properties.Act.properties.Mara.properties.action;
+const mre = new RegExp(actArgs.pattern);
+check('Act action pattern takes motions', mre.test('creeps across the lawn') && mre.test('sits down') && mre.test('stands up and crosses the room'), actArgs);
+const full = s => new RegExp(`^(?:${actArgs.pattern})$`).test(s);
+check('the pattern takes the whole action as the grammar matches it', full('steps out of her house onto the street') && full('creeps across the lawn, keeping low') && full('sits'), null);
+check('Act action pattern leaves out watching and dropping', !mre.test('watches from the lit window') && !mre.test('drops down into the garden') && !mre.test('climbs the wall'), null);
+check("a possessive names its owner", SP.scenePeople(["The innkeeper looked at Tom's mug."], []).every(n => !/'s$/.test(n)), SP.scenePeople(["The innkeeper looked at Tom's mug."], []));
+// The reply: a bounded scene, one required passage per result, read back as beats in result order.
+const N = await import('../src/rules/narration.js');
+const ns = N.narrationSchema(2);
+check('reply schema: scene bounded, each result required', ns.properties.scene.maxLength === N.SCENE_CHARS && ns.properties.results.required.join() === '1,2' && ns.properties.results.additionalProperties === false, ns);
+const nr = N.readNarration('{"scene":"Rain on the cobbles.","results":{"2":"She paid him.","1":"She walked over."},"open":["Does he thank her?"]}');
+check('reply read as beats', nr.beats.map(b => b.result).join() === '0,1,2' && nr.open[0] === 'Does he thank her?', nr);
+const s5 = P.planSchema(new Set(['BodyCheck', 'Look']), { people: ['Mara', 'the merchant'], actors: ['Mara'] });
+check('first round: a climb is the player\'s', Object.keys(s5.properties.calls.properties.BodyCheck.properties).join() === 'Mara' && 'the merchant' in s5.properties.calls.properties.Look.properties, null);
+const s6 = P.planSchema(new Set(['BodyCheck', 'Look']), { people: ['Mara', 'the merchant'], require: ['BodyCheck', 'Look'], used: new Map([['BodyCheck', new Set(['Mara', 'the merchant'])]]) });
+check('a tool with every key used is not required', !s6.properties.calls.required.includes('BodyCheck') && s6.properties.calls.required.includes('Look'), s6.properties.calls.required);
+const s7 = P.planSchema(new Set(['Price']), {});
+check('Price takes an other good with good and like', s7.properties.calls.properties.Price.properties['other good'].required.join() === 'question,good,like', s7.properties.calls.properties.Price.properties['other good'].required);
+const k7 = P.callsFromKeyed({ Price: { 'other good': { question: 'price of goods', good: 'vodka', like: 'wine (litre)', quantity: 0.2 } } });
+check('other good read back with no item', k7[0].args.good === 'vodka' && !('item' in k7[0].args), k7);
+check('places are no people', !SP.scenePeople(['Saint Petersburg, Nevsky Prospect, 2 February 1861.'], ['Pyotr']).some(n => /Petersburg|Prospect/.test(n)), null);
+check('a blow keyed by who strikes it', P.subjectOf('BodyStrike') === 'attacker' && P.callsFromKeyed({ BodyStrike: { Jack: { who: 'the sailor', attack: 'punch' } } })[0].args.attacker === 'Jack', null);
+// A brace inside a message is text: the plan still reads ("a smile :}", a whispered "{W meet me").
+{
+  const got = ['a smile :}', '{W meet me'].map(m => Q.rawPlan(`QUESTIONS\n1. Does Tom hear?\n{"calls":{"Communicate":{"Mara":{"listener":"Tom","message":${JSON.stringify(m)}}}}}`).calls[0]?.args.message);
+  if (got[0] !== 'a smile :}' || got[1] !== '{W meet me') { miss++; console.log(`MISS a brace inside a message is text: ${JSON.stringify(got)}`); }
+}
+// The world book's draft reads as the plan does: a brace inside a value is text.
+{
+  const W = await import('../src/rules/world.js');
+  const e = W.parseEntry('Here: {"what":"a door marked {sealed","kind":"event"}'), f = W.parseEntry('{"what":"orcs who grin :}","kind":"people"}');
+  if (e?.what !== 'a door marked {sealed' || f?.what !== 'orcs who grin :}') { miss++; console.log(`MISS a brace inside a world-book value is text: ${JSON.stringify([e, f])}`); }
+}
+console.log(`60 checks, ${miss} miss(es)`);
+process.exitCode = miss ? 1 : 0; // exitCode lets output queued for a pipe finish (process.exit() can cut it)

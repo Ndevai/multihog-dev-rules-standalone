@@ -1,0 +1,240 @@
+// Compounds: measured properties (rules/chem.json, 3796 single compounds compiled by the chemicals library) checked against
+// physics and against what their structure allows (docs/df-body-engine.md §6.19). Measured values win; estimates fill gaps.
+import { parseSmiles, formulaOf, formulaString, jobackGroups, jobackProps, combustionKJmol, hazards, loadJoback, stateAt } from './structure.js';
+import { molarMass, o2Mol, parseFormula } from './substance.js';
+import { derivedFlash, mixtureFlash, bubble, loadUnifac, psat } from './vapour.js';
+import { freezeChance, iceMeltK, CONTENTS } from './freezing.js';
+import { k } from './constants.js';
+let DB = null, byName = null;
+let loading = null;
+export function loadChem() {
+    loading ??= Promise.all([loadJoback(), loadUnifac(), fetch(new URL('../../rules/chem.json', import.meta.url)).then(r => r.json())]).then(([, , d]) => {
+        DB = d;
+        byName = new Map();
+        for (const r of DB.rows) {
+            byName.set(r.n.toLowerCase(), r);
+            byName.set(r.cas, r);
+        }
+    });
+    return loading;
+}
+export const chemRows = () => DB?.rows ?? [];
+export const findCompound = (q) => byName?.get(q.trim().toLowerCase()) ?? null;
+export const sourceOf = (r, k) => DB?.sources[String(r[k + '_s'])] ?? '?';
+// Boiling point estimate: Joback, corrected by Stein & Brown 1994 (J Chem Inf Comput Sci 34:581): Tb − 94.84 + 0.5577 Tb −
+// 0.0007705 Tb² up to 700 K, else Tb + 282.7 − 0.5209 Tb. On the 1854 compounds here with a measured boiling point: mean
+// error 21.8 K (Joback alone 44.6), median 12.2 K, 90 % within 45 K; molecules of more than 12 groups 32.3 K (Joback 130.9).
+export const steinBrown = (t) => t <= 700 ? t - 94.84 + 0.5577 * t - 0.0007705 * t * t : t + 282.7 - 0.5209 * t;
+/** Estimated properties from a structure: boiling point (Stein–Brown), melting point (Joback, mean error 22.6 K in Joback's
+ * test, 67.7 K on the compounds here), heat of formation of the gas. Null when the groups do not cover it. */
+export function estimate(smiles) {
+    const m = parseSmiles(smiles), g = jobackGroups(m), p = g.groups ? jobackProps(g.groups) : null;
+    const nGroups = g.groups ? Object.values(g.groups).reduce((a, b) => a + b, 0) : 0;
+    return { m, formula: formulaOf(m), hazards: hazards(m), props: p ? { ...p, Tb: steinBrown(p.Tb) } : null, nGroups, why: g.groups ? null : g.why };
+}
+// Physical consistency of a record [tolerances ASSUMED]:
+// - limits are fractions between 0 and 1, lower below upper;
+// - a melting point above the boiling point means the compound sublimes at 1 atm (CO2) or one value is wrong: suspect;
+// - a pure liquid's flash point cannot lie above its boiling point (at the boiling point the air over it is all vapour,
+//   above any lower limit): more than 10 K above → contradiction;
+// - autoignition (no flame) needs more heat than a flash with a flame: autoignition ≤ flash point → contradiction;
+// - lower limit vs Jones's rule from the atoms, LFL ≈ c × stoichiometric fraction 1 ÷ (1 + 4.773 × mol O2) (Jones 1938,
+//   as given in Crowl & Louvar, Chemical Process Safety); c = 0.49, the median over the 247 C/H/O/N compounds here
+//   (10–90 %: 0.40–0.57; Jones gave 0.55); outside 0.25–1.0 → suspect (2 or more carbons);
+// - boiling point vs the Stein–Brown estimate: beyond 4 × the median error of its size (44 K up to 12 groups, 77 K above)
+//   → suspect.
+export function checkCompound(r) {
+    const out = [];
+    for (const k of ['LFL', 'UFL'])
+        if (r[k] != null && !(r[k] > 0 && r[k] < 1))
+            out.push(`contradiction: ${k} ${r[k]} is not a fraction between 0 and 1 (${sourceOf(r, k)})`);
+    if (r.LFL != null && r.UFL != null && r.LFL >= r.UFL)
+        out.push(`contradiction: lower flammability limit ${r.LFL} ≥ upper ${r.UFL}`);
+    if (r.Tm != null && r.Tb != null && r.Tm > r.Tb)
+        out.push(`suspect: melting point ${r.Tm} K above boiling point ${r.Tb} K (sublimes at 1 atm, or one value is wrong; ${sourceOf(r, 'Tm')} / ${sourceOf(r, 'Tb')})`);
+    if (r.Tf != null && r.Tb != null && r.Tf > r.Tb + 10)
+        out.push(`contradiction: flash point ${r.Tf} K above boiling point ${r.Tb} K (${sourceOf(r, 'Tf')})`);
+    // Measured flash point vs the one its vapour pressure and lower limit give (§6.19, vapour.ts): beyond 25 K suspect
+    // (90 % of compounds agree within 18.5 K) [ASSUMED threshold].
+    if (r.Tf != null && r.Tb != null && r.Tb > 298.15) {
+        const d = derivedFlash(r);
+        if (d != null && Math.abs(d - r.Tf) > 25)
+            out.push(`suspect: flash point ${r.Tf} K, but its vapour pressure reaches the lower limit at ${Math.round(d)} K (${sourceOf(r, 'Tf')})`);
+    }
+    if (r.Tf != null && r.Ta != null && r.Ta <= r.Tf)
+        out.push(`contradiction: autoignition ${r.Ta} K at or below flash point ${r.Tf} K (${sourceOf(r, 'Ta')})`);
+    let f = null;
+    try {
+        f = parseFormula(r.f);
+    }
+    catch { /* formula with charges or brackets */ }
+    if (f && r.LFL != null && r.LFL > 0 && Object.keys(f).every(e => 'CHON'.includes(e)) && (f.C ?? 0) >= 2) {
+        const n = o2Mol(r.f), c = r.LFL * (1 + 4.773 * n);
+        if (n > 0 && (c < 0.25 || c > 1.0))
+            out.push(`suspect: lower limit ${r.LFL} is ${(c / 0.49).toFixed(2)} × what its atoms suggest (${(0.49 / (1 + 4.773 * n)).toFixed(4)}; ${sourceOf(r, 'LFL')})`);
+    }
+    if (r.Tb != null) {
+        try {
+            const e = estimate(r.smi);
+            if (e.props) {
+                const lim = e.nGroups <= 12 ? 44 : 77, d = r.Tb - e.props.Tb;
+                if (Math.abs(d) > lim)
+                    out.push(`suspect: boiling point ${r.Tb} K is ${Math.round(d)} K from what its groups give (${Math.round(e.props.Tb)} K; ${sourceOf(r, 'Tb')})`);
+            }
+        }
+        catch { /* structure outside the reader */ }
+    }
+    return out;
+}
+// Heat of burning from a measured heat of formation (Hess's law, products as in structure.ts), for the phase at 25 °C.
+export function heatFromFormation(r) {
+    let f;
+    try {
+        f = parseFormula(r.f);
+    }
+    catch {
+        return null;
+    }
+    if (Object.keys(f).some(e => !'CHNOS'.includes(e)) || !f.C && !f.H)
+        return null;
+    const phase = r.Tb != null && r.Tb < 298.15 ? 'g' : r.Tm != null && r.Tm > 298.15 ? 's' : 'l';
+    const hf = phase === 'g' ? r.Hfg ?? null : phase === 's' ? r.Hfs ?? null : r.Hfl ?? null;
+    if (hf == null)
+        return null;
+    const prod = (f.C ?? 0) * -393.51 + (f.H ?? 0) / 2 * -285.83 + (f.S ?? 0) * -296.81;
+    return { kJmol: hf - prod, phase };
+}
+const pct = (p) => p >= 0.995 ? `${Math.round(p * 100)} %` : p >= 0.01 ? `${(p * 100).toPrecision(2)} %` : p > 0 ? `${(p * 100).toExponential(1).replace(/e([+-]\d+)/, ' × 10^$1')} %` : '0 %';
+/** Water below its melting point: ice stays ice; liquid water freezes only once a crystal starts in it (freezing.ts). */
+function cooledWater(tempC, c) {
+    const meltC = iceMeltK() - 273.15, m = (Math.abs(meltC) < 0.05 ? 0 : meltC).toFixed(1);
+    if (!(Number(c.volumeMl) > 0))
+        return `at ${tempC} °C: ice stays ice below its melting point (${m} °C); liquid water cooled to ${tempC} °C stays liquid until ice starts in it, which depends on how much there is and what is in it (give volume_ml and contents)`;
+    const contents = c.contents ?? CONTENTS[0], minutes = Number(c.minutes) > 0 ? Number(c.minutes) : k('coldHoldMin');
+    const f = freezeChance(tempC, Number(c.volumeMl), minutes * 60, contents);
+    const why = contents === 'touching ice, frost or snow' ? 'the ice it touches starts it'
+        : [contents === 'distilled or filtered water' ? '' : `particles that start ice at ${tempC} °C: ${f.n.toPrecision(2)} per mL${f.extrapolated ? ' (snowmelt fit extrapolated outside −6.3 to −15.0 °C)' : ''}`,
+            f.self > 1e-30 ? `crystals starting by themselves: ${f.self.toPrecision(2)} per cm³ per s over ${minutes} min` : contents === 'distilled or filtered water' ? `crystals starting by themselves: none to speak of above −30 °C` : ''].filter(Boolean).join('; ');
+    const what = contents === 'touching ice, frost or snow' ? `water ${contents}` : contents.replace(/:.*/, '');
+    const out = `at ${tempC} °C: below its melting point (${m} °C), liquid until ice starts in it. ${c.volumeMl} mL of ${what}: ${why}; chance it freezes ${pct(f.p)}`;
+    if (!c.draw)
+        return out;
+    return `${out}: ${c.draw() < f.p ? `FREEZES. ${pct(f.atOnce)} turns to ice at once and the heat it gives up warms the rest to ${m} °C as slush, which freezes on as the cold draws heat out` : `STAYS LIQUID, supercooled ${(meltC - tempC).toFixed(1)} K below its melting point`}`;
+}
+/** What a compound is at temperature T (°C): state, whether it burns, heat, fire limits, problems found. Below its melting
+ *  point a compound is solid once crystallised; liquid water cooled there is decided by `cooled` (freezing.ts). */
+export function describe(q, tempC = 20, cooled = {}) {
+    const T = tempC + 273.15;
+    let r = findCompound(q), smi = r?.smi ?? null;
+    if (!r) {
+        try {
+            parseSmiles(q);
+            smi = q;
+        }
+        catch {
+            return `Name one compound from the table (3796 single compounds; mixtures such as kerosene or wood are outside it) or give its SMILES ("${q}" fits neither).`;
+        }
+    }
+    const e = (() => { try {
+        return estimate(smi);
+    }
+    catch {
+        return null;
+    } })();
+    const formula = r?.f ?? (e ? formulaString(e.formula) : '?');
+    // The compound by name: its formula, CAS number and molar mass are the table's, no outcome (a narrator that read them wrote them).
+    const parts = [`${r?.n ?? q}`];
+    const tb = r?.Tb ?? e?.props?.Tb, tm = r?.Tm ?? e?.props?.Tm;
+    const tbTag = r?.Tb != null ? '' : ' [estimated]', tmTag = r?.Tm != null ? '' : ' [estimated]';
+    if (tb != null && tm != null) {
+        if (tm > tb)
+            parts.push(`at ${tempC} °C: ${T >= tb ? 'gas' : 'solid'} (turns straight to gas at ${Math.round(tb - 273.15)} °C${tbTag}; no liquid at normal pressure)`);
+        else if (r?.f === 'H2O' && T < tm)
+            parts.push(`${cooledWater(tempC, cooled)} (boils ${Math.round(tb - 273.15)} °C)`);
+        // A crystal has to start in a liquid cooled below its melting point (freezing.ts); the table holds no rate for that.
+        else if (T < tm)
+            parts.push(`at ${tempC} °C: solid once crystallised; a melt cooled below its melting point stays liquid until a crystal starts, at a rate the table does not hold (melts ${Math.round(tm - 273.15)} °C${tmTag}, boils ${Math.round(tb - 273.15)} °C${tbTag})`);
+        else
+            parts.push(`at ${tempC} °C: ${stateAt({ Tb: tb, Tm: tm }, T)} (melts ${Math.round(tm - 273.15)} °C${tmTag}, boils ${Math.round(tb - 273.15)} °C${tbTag})`);
+    }
+    const hc = r ? heatFromFormation(r) : null;
+    const burnable = (() => { try {
+        return o2Mol(formula) > 0 && /C|H/.test(formula) && formula !== 'H2O';
+    }
+    catch {
+        return false;
+    } })();
+    if (!burnable)
+        parts.push('incombustible');
+    else if (hc)
+        parts.push(`burns: ${(hc.kJmol / molarMass(formula)).toFixed(1)} kJ/g`);
+    else if (e?.props) {
+        const k = combustionKJmol(e.formula, e.props, 'gas');
+        if (k != null)
+            parts.push(`burns: about ${(k / molarMass(formula)).toFixed(1)} kJ/g as gas [estimated from its groups]`);
+    }
+    const tf = r?.Tf ?? (r ? derivedFlash(r) : null), tfTag = r?.Tf != null ? '' : ' [from its vapour pressure and lower limit]';
+    if (tf != null)
+        parts.push(T >= tf ? `vapour catches fire from a flame at this temperature (flash point ${Math.round(tf - 273.15)} °C${tfTag})` : `vapour catches fire from a flame from ${Math.round(tf - 273.15)} °C (flash point${tfTag})`);
+    if (r) {
+        const pv = psat(r, T);
+        if (pv != null && T < (r.Tb ?? Infinity))
+            parts.push(`vapour pressure ${pv < 100 ? pv.toPrecision(2) + ' Pa' : (pv / 1000).toPrecision(3) + ' kPa'}`);
+    }
+    if (r?.Ta != null)
+        parts.push(`ignites without a flame at ${Math.round(r.Ta - 273.15)} °C`);
+    if (r?.LFL != null && r?.UFL != null)
+        parts.push(`burns in air between ${+(r.LFL * 100).toFixed(1)} and ${+(r.UFL * 100).toFixed(1)} % vapour`);
+    const probs = [...(e?.hazards ?? []), ...(r ? checkCompound(r) : [])];
+    return parts.join('; ') + '.' + (probs.length ? ` Notes: ${probs.join('; ')}.` : '');
+}
+export function heatingValue(el, moisturePct = 0) {
+    const ash = el.ash ?? 0, scale = (100 - ash) / 100; // elements given dry ash-free → dry basis
+    const C = el.C * scale, H = el.H * scale, O = el.O * scale, N = (el.N ?? 0) * scale, S = (el.S ?? 0) * scale;
+    const hhvDry = 0.3491 * C + 1.1783 * H + 0.1005 * S - 0.1034 * O - 0.0151 * N - 0.0211 * ash;
+    const w = Math.min(Math.max(moisturePct, 0), 100) / 100, hhvWet = hhvDry * (1 - w);
+    return { hhvDry, hhvWet, lhvWet: hhvWet - 2.443 * (w + 8.937 * H / 100 * (1 - w)) };
+}
+let FUELS = null;
+export async function loadFuels() { FUELS ??= (await (await fetch(new URL('../../rules/fuels.json', import.meta.url))).json()).fuels; }
+export const fuelRows = () => FUELS ?? [];
+/** A fuel by name (rules/fuels.json) at a moisture and ash; heat per kg, wet. */
+export function describeFuel(name, moisturePct = 0, ashPct = 0) {
+    const f = FUELS?.find(x => x.name === name.trim().toLowerCase());
+    if (!f)
+        return null;
+    const h = heatingValue({ ...f, ash: ashPct }, moisturePct);
+    return `${f.name} (C ${f.C} %, H ${f.H} %, O ${f.O} % of the dry, ash-free fuel), ${moisturePct} % water, ${ashPct} % ash: gives ${h.lhvWet.toFixed(1)} MJ per kg burnt in practice (water leaves as steam), ${h.hhvWet.toFixed(1)} MJ/kg if the steam is condensed; dry ash-free it would give ${f.hhv.toFixed(1)} MJ/kg (measured; its elements give ${h.hhvDry.toFixed(1)} at this ash).${moisturePct > 0 && h.lhvWet <= 0 ? ' Too wet to keep burning on its own.' : ''}`;
+}
+/** A mixture of compounds by mass, "ethanol 40%, water 60%": each part's state, the heat of the whole, its elements. */
+export function describeMixture(text, tempC = 20) {
+    const parts = text.split(/[,;+]/).map(x => x.trim()).filter(Boolean).map(x => { const m = x.match(/^(.*?)\s+([\d.]+)\s*%$/); return m ? { q: m[1], w: Number(m[2]) } : null; });
+    if (parts.some(p => !p))
+        return `Give a mixture as "name share%, name share%" by mass (e.g. "ethanol 40%, water 60%").`;
+    const total = parts.reduce((s, p) => s + p.w, 0);
+    if (Math.abs(total - 100) > 0.5)
+        return `The shares add up to ${total} %; give shares that add up to 100 %.`;
+    let heat = 0;
+    const els = {}, lines = [];
+    for (const p of parts) {
+        const r = findCompound(p.q);
+        if (!r)
+            return `Give "${p.q}" as a compound from the table or as its SMILES.`;
+        const f = parseFormula(r.f), M = molarMass(r.f), h = heatFromFormation(r);
+        for (const [e, n] of Object.entries(f))
+            els[e] = (els[e] ?? 0) + p.w * n * molarMassOf(e) / M;
+        const burns = o2Mol(r.f) > 0 && r.f !== 'H2O';
+        if (burns && h)
+            heat += p.w / 100 * h.kJmol / M;
+        const T = tempC + 273.15, st = r.Tb != null && r.Tm != null ? (T >= r.Tb ? 'gas' : T >= r.Tm ? 'liquid' : 'below its melting point') : '?';
+        lines.push(`${r.n} ${p.w} % (${st} on its own${burns ? (h ? `, ${(h.kJmol / M).toFixed(1)} kJ/g` : ', heat unknown') : ', incombustible'})`);
+    }
+    // Liquid mixture: mole fractions, then boiling point and flash point by UNIFAC (vapour.ts).
+    const rows = parts.map(p => findCompound(p.q)), mol = rows.map((r, i) => parts[i].w / molarMass(r.f)), mt = mol.reduce((a, b) => a + b, 0);
+    const mix = rows.map((r, i) => ({ r, x: mol[i] / mt }));
+    const bp = bubble(mix), fp = mixtureFlash(mix);
+    const liquid = bp && fp != null ? ` As a liquid mixture (UNIFAC): boils at ${(bp.T - 273.15).toFixed(0)} °C, its first vapour ${mix.map((m, i) => `${m.r.n} ${(bp.y[i] * 100).toFixed(0)} %`).join(', ')} by moles; vapour catches fire from a flame from ${(fp - 273.15).toFixed(0)} °C (flash point${tempC + 273.15 >= fp ? ', reached at this temperature' : ''}).` : bp ? ` As a liquid mixture (UNIFAC): boils at ${(bp.T - 273.15).toFixed(0)} °C.` : '';
+    const elText = Object.entries(els).sort((a, b) => b[1] - a[1]).map(([e, v]) => `${e} ${v.toFixed(1)} %`).join(', ');
+    return `Mixture: ${lines.join('; ')}. Burnt completely it gives ${heat.toFixed(1)} kJ per g of mixture (water in it only takes heat away). Elements by mass: ${elText}.${liquid}`;
+}
+const molarMassOf = (e) => molarMass(e);

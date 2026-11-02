@@ -1,0 +1,159 @@
+/* Rules Engine: the reading note under the player's line and the question popup (src/ui.ts), in the user's theme
+   (SillyTavern's theme variables, public/style.css :root) and in a book serif that follows the story's era. Nothing moves.
+
+   Period type, by the story's year (src/ui.ts eraOf); each face is subset to Latin, OFL-licensed (fonts/OFL-*.txt):
+   before 1600  EB Garamond: Garamont's roman and Granjon's italic, from the Berner specimen of 1592
+   1600-1749    IM FELL English: the Fell types of the Oxford press, 1670s-1680s
+   1750-1799    Libre Baskerville: Baskerville's design (1757), from the ATF revival of 1941
+   1800-1919    Old Standard: the Modern (Didone) style of late nineteenth- and early twentieth-century editions
+   1920-1969    Libre Caslon Text: Caslon as mid-twentieth-century lettering drew it
+   1970 on, or no calendar date: Georgia and the system's book serifs. */
+@font-face { font-family: 'Rules EB Garamond'; src: url('fonts/garamond.woff') format('woff'); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules EB Garamond'; src: url('fonts/garamond-italic.woff') format('woff'); font-style: italic; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules IM Fell English'; src: url('fonts/fell.woff') format('woff'); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules IM Fell English'; src: url('fonts/fell-italic.woff') format('woff'); font-style: italic; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules Baskerville Subset'; src: url('fonts/baskerville.woff') format('woff'); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules Baskerville Subset'; src: url('fonts/baskerville-italic.woff') format('woff'); font-style: italic; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules Old Standard'; src: url('fonts/oldstandard.woff') format('woff'); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules Old Standard'; src: url('fonts/oldstandard-italic.woff') format('woff'); font-style: italic; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules Libre Caslon Text'; src: url('fonts/caslon.woff') format('woff'); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rules Libre Caslon Text'; src: url('fonts/caslon-italic.woff') format('woff'); font-style: italic; font-weight: 400; font-display: swap; }
+
+.rules-era-c16 { --rules-serif: 'Rules EB Garamond', Garamond, 'Palatino Linotype', Palatino, serif; --rules-nums: oldstyle-nums proportional-nums; }
+.rules-era-c17 { --rules-serif: 'Rules IM Fell English', 'Rules EB Garamond', serif; --rules-nums: normal; }
+.rules-era-c18 { --rules-serif: 'Rules Baskerville Subset', Baskerville, 'Baskerville Old Face', serif; --rules-nums: normal; }
+.rules-era-c19 { --rules-serif: 'Rules Old Standard', 'Bodoni 72', Didot, serif; --rules-nums: normal; }
+/* Libre Caslon's italic joins s to p and t in its standard ligatures, which reads as a long s: off. */
+.rules-era-c20 { --rules-serif: 'Rules Libre Caslon Text', 'Big Caslon', serif; --rules-nums: oldstyle-nums; font-variant-ligatures: no-common-ligatures; }
+.rules-era-now { --rules-serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif; --rules-nums: normal; }
+
+/* The note: an italic aside under the line, folded to one line (the guess, then each call's tag and words), opened to a
+   line per call with its tag in a column. font-size-adjust gives every era's face the same x-height. */
+.rules-reading {
+    margin: 0.4em 0 0.1em;
+    padding: 0 0 0 0.75em;
+    border-left: 2px solid var(--SmartThemeEmColor);
+    border-radius: 0;
+    font-family: var(--rules-serif);
+    font-style: italic;
+    font-size: calc(var(--mainFontSize) * 0.9);
+    font-size-adjust: 0.46;
+    font-variant-numeric: var(--rules-nums, normal);
+    line-height: 1.45;
+    color: var(--SmartThemeEmColor);
+}
+.rules-reading-sum { display: flex; gap: 0.6em; align-items: baseline; white-space: nowrap; overflow: hidden; cursor: pointer; list-style: none; }
+.rules-reading-sum::-webkit-details-marker { display: none; }
+.rules-reading-sum::before { content: '▸'; flex: none; font-style: normal; font-size: 0.8em; }
+.rules-reading[open] > .rules-reading-sum::before { content: '▾'; }
+.rules-reading-sum:focus-visible { outline: 1px solid var(--interactable-outline-color); outline-offset: 2px; }
+.rules-reading-taken, .rules-reading-redone, .rules-reading-meant { flex: 0 0 auto; max-width: 75%; overflow: hidden; text-overflow: ellipsis; color: var(--SmartThemeQuoteColor); }
+.rules-reading-or { flex: none; margin-left: -0.3em; color: var(--SmartThemeQuoteColor); }
+.rules-reading-list { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rules-reading-item + .rules-reading-item::before { content: ' · '; }
+.rules-reading-label { display: none; }
+.rules-reading[open] .rules-reading-list { display: none; }
+.rules-reading[open] .rules-reading-sum:not(:has(.rules-reading-taken, .rules-reading-redone, .rules-reading-meant)) .rules-reading-label { display: inline; }
+.rules-reading-body { padding: 0.15em 0 0.25em 1.05em; }
+.rules-reading-row { display: flex; gap: 0.4em; align-items: baseline; }
+.rules-reading-row > .rules-tag { flex: none; min-width: 3.7em; }
+.rules-reading-text[title] { cursor: help; }
+.rules-reading-alts { margin: 0.3em 0 0; }
+
+/* A tag names the kind of rule in a word and a colour: Okabe & Ito's colour-blind-safe hues, each mixed with the theme's
+   text colour by the share that keeps it at 4.5:1 or more on SillyTavern's shipped themes (dark) and a light one
+   (tests/ui.test.mjs reads these shares). */
+.rules-tag { font-style: normal; font-variant: small-caps; letter-spacing: 0.03em; margin-right: 0.3em; }
+.rules-reading[data-tone="dark"] .rules-k-sense { color: color-mix(in srgb, #56B4E9 85%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="dark"] .rules-k-speech { color: color-mix(in srgb, #009E73 40%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="dark"] .rules-k-body { color: color-mix(in srgb, #D55E00 40%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="dark"] .rules-k-move { color: color-mix(in srgb, #E69F00 85%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="dark"] .rules-k-mind { color: color-mix(in srgb, #CC79A7 70%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="dark"] .rules-k-time { color: color-mix(in srgb, #F0E442 85%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="dark"] .rules-k-thing { color: color-mix(in srgb, #0072B2 25%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="light"] .rules-k-sense { color: color-mix(in srgb, #56B4E9 55%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="light"] .rules-k-speech { color: color-mix(in srgb, #009E73 70%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="light"] .rules-k-body { color: color-mix(in srgb, #D55E00 80%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="light"] .rules-k-move { color: color-mix(in srgb, #E69F00 50%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="light"] .rules-k-mind { color: color-mix(in srgb, #CC79A7 65%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="light"] .rules-k-time { color: color-mix(in srgb, #F0E442 35%, var(--SmartThemeBodyColor)); }
+.rules-reading[data-tone="light"] .rules-k-thing { color: color-mix(in srgb, #0072B2 90%, var(--SmartThemeBodyColor)); }
+
+/* A linked word: a choice or another reading, underlined in the theme's underline colour. */
+.rules-link {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--SmartThemeUnderlineColor);
+    text-underline-offset: 0.18em;
+    cursor: pointer;
+}
+.rules-link:hover { text-decoration-thickness: 2px; }
+.rules-link:focus-visible { outline: 1px solid var(--interactable-outline-color); outline-offset: 2px; }
+.rules-reading .rules-link { color: var(--SmartThemeBodyColor); }
+
+/* The question: the player's words in italics, then one sentence with every choice linked alike and numbered (the numbers
+   are also the keys that pick), the choices' descriptions in italics; "Say it another way" under it. */
+.rules-ask { text-align: left; font-family: var(--rules-serif); font-size-adjust: 0.46; font-variant-numeric: var(--rules-nums, normal); color: var(--SmartThemeBodyColor); }
+.rules-ask-said { margin: 0 0 0.4em; font-style: italic; color: var(--SmartThemeEmColor); }
+.rules-ask-prose { margin: 0; font-size: calc(var(--mainFontSize) * 1.15); line-height: 1.6; }
+.rules-ask-prose:focus { outline: none; }
+.rules-ask-choice sup { display: inline-block; margin-right: 0.15em; font-size: 0.6em; color: var(--SmartThemeEmColor); text-decoration: none; }
+.rules-ask-note { font-style: italic; font-size: 0.9em; color: var(--SmartThemeEmColor); }
+.rules-ask-foot { margin: 0.9em 0 0; font-size: 0.9em; }
+.rules-ask-foot .rules-link { color: var(--SmartThemeEmColor); }
+.popup:has(.rules-ask) .popup-controls { display: none; }
+
+/* How a line is said, without signs (src/ui.ts VOICE_GROUPS, src/rules/voice-code.ts). Each group of marks has one soft
+   colour (the kind colours' hues): the toolbar's group name and the underline of its marked words in the message box. */
+.rules-hl-sense { --rules-hue: #56B4E9; }
+.rules-hl-body { --rules-hue: #D55E00; }
+.rules-hl-move { --rules-hue: #E69F00; }
+.rules-hl-mind { --rules-hue: #CC79A7; }
+.rules-hl-time { --rules-hue: #F0E442; }
+.rules-hl-speech { --rules-hue: #009E73; }
+
+/* The toolbar above the message box, shown while words are selected (or opened with ♪): plain words, each set in the effect
+   it names. */
+#rules-voice { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25em 0.9em; padding: 0.3em 0.6em; font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: calc(var(--mainFontSize) * 0.88); color: var(--SmartThemeBodyColor); background-color: var(--SmartThemeBlurTintColor); border: 1px solid var(--SmartThemeBorderColor); border-bottom: 0; border-radius: 10px 10px 0 0; }
+#rules-voice[hidden] { display: none; }
+#rules-voice .rules-voice-group { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0.15em; }
+#rules-voice .rules-voice-name { font-size: 0.78em; font-variant: small-caps; letter-spacing: 0.04em; margin-right: 0.25em; color: color-mix(in srgb, var(--rules-hue) 60%, var(--SmartThemeBodyColor)); }
+#rules-voice .rules-voice-btn { font: inherit; padding: 0.05em 0.45em; color: inherit; background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; line-height: 1.6; }
+#rules-voice .rules-voice-btn:hover { border-color: color-mix(in srgb, var(--rules-hue) 55%, transparent); background: color-mix(in srgb, var(--rules-hue) 10%, transparent); }
+#rules-voice .rules-voice-btn:focus-visible { outline: 1px solid var(--interactable-outline-color); outline-offset: 1px; }
+#rules-voice-open { opacity: 0.7; }
+#rules-voice-open.rules-voice-on { opacity: 1; color: var(--SmartThemeQuoteColor); }
+
+/* The layer over the message box: the box's text, invisible, at the same place; each marked word underlined in its group's
+   soft colour, a faint tint under its letters. It lies over the box and lets every click through, so a theme that paints
+   the box's background does not hide it. */
+#send_form.rules-voice-form { position: relative; }
+#rules-voice-layer { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; color: transparent; white-space: pre-wrap; overflow-wrap: break-word; word-wrap: break-word; box-sizing: border-box; border: 0 solid transparent; }
+#rules-voice-layer[hidden] { display: none; }
+#rules-voice-layer .rules-hl { background: color-mix(in srgb, var(--rules-hue) 14%, transparent); box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--rules-hue) 70%, transparent); border-radius: 2px; }
+
+/* The chat: the player's line typeset the way it sounds. The same classes set the toolbar's words. */
+.rules-v-loud { font-variant: small-caps; font-weight: bolder; letter-spacing: 0.02em; }
+.rules-v-quiet { font-size: 0.86em; color: var(--SmartThemeEmColor); }
+.rules-v-whisper { font-style: italic; color: var(--SmartThemeEmColor); letter-spacing: 0.02em; }
+.rules-v-up { position: relative; top: -0.24em; }
+.rules-v-down { position: relative; top: 0.18em; }
+.rules-v-stress { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.18em; }
+.rules-v-stretch { letter-spacing: 0.2em; }
+.rules-v-fast { letter-spacing: -0.03em; }
+.rules-v-slow { letter-spacing: 0.13em; }
+.rules-v-breathy { color: color-mix(in srgb, var(--SmartThemeEmColor) 55%, var(--SmartThemeBodyColor)); text-shadow: 0 0 0.2em currentColor; }
+.rules-v-creaky { text-decoration: underline wavy; text-decoration-color: var(--SmartThemeEmColor); text-underline-offset: 0.2em; }
+.rules-v-falsetto { font-size: 0.9em; position: relative; top: -0.12em; }
+.rules-v-smile, .rules-v-laugh { color: color-mix(in srgb, #E69F00 50%, var(--SmartThemeBodyColor)); }
+/* The words the typesetting adds (inhales, angrily, the pause's dot) show the marks; a line selected and copied is the player's own. */
+.rules-v-add { color: var(--SmartThemeEmColor); -webkit-user-select: none; user-select: none; }
+.rules-v-add-inhales, .rules-v-add-exhales { font-variant: small-caps; font-size: 0.78em; letter-spacing: 0.03em; }
+.rules-v-add-feeling { font-style: italic; font-size: 0.86em; color: var(--SmartThemeQuoteColor); }
+.rules-v-add-ha { font-size: 0.6em; vertical-align: super; color: color-mix(in srgb, #E69F00 50%, var(--SmartThemeBodyColor)); }
+.rules-v-add-micro, .rules-v-add-pause { letter-spacing: 0.1em; }
+[title].rules-v { cursor: help; }
