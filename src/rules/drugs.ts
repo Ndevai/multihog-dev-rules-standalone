@@ -17,7 +17,7 @@ export type DrugRow = Record<(typeof COLS)[number], number>;
 
 let TABLE: Record<string, { mg: number[]; runs: number[][][] }> | null = null, loading: Promise<void> | null = null;
 export function loadDrugs(): Promise<void> {
-    loading ??= fetch(new URL('../../rules/pulse/drugs.json', import.meta.url)).then(r => r.json()).then(d => { TABLE = d.drugs; });
+    loading ??= fetch(new URL('../../rules/pulse/drugs.json', import.meta.url)).then(r => r.json()).then(d => { TABLE = d.drugs; }).catch(e => { loading = null; throw e; });
     return loading;
 }
 export const drugKeys = () => Object.keys(TABLE ?? {});

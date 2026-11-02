@@ -135,6 +135,11 @@ export function roomSound(levelAt1m: number, room: { m3: number; absorption: num
 }
 const add = (a: number, b: number) => 10 * Math.log10(10 ** (a / 10) + 10 ** (b / 10));
 
+/** Index of the band holding a tonal sound's pitch (a bell's note, a whistle), -1 for a sound without one. */
+const toneBand = (way?: Way) => way?.toneHz ? BANDS.reduce((b, f, i) => Math.abs(Math.log2(f / way.toneHz!)) < Math.abs(Math.log2(BANDS[b] / way.toneHz!)) ? i : b, 0) : -1;
+/** Level per band of a sound of overall `spl` dB: all in the tone's band when it has a pitch, else spread evenly over the six bands. */
+const spectrum = (spl: number, tone: number) => BANDS.map((_, i) => tone >= 0 ? (i === tone ? spl - DELTA[i] : -99) : spl - 10 * Math.log10(6) - DELTA[i]);
+
 /** Octave-band levels (dB spectrum level) of a sound of `effort` (or overall `spl` at 1 m, pink) after distance and barrier. */
 // The Lombard effect: talkers raise their voices in noise without meaning to. Face to face (levels at 1 m), the voice stays
 // near 55 dB until the background reaches about 48 dB, then rises about 0.6 dB per dB, levelling off near 67 dB around a
@@ -146,8 +151,7 @@ export const lombardDb = (effort: Effort, noiseDb: number) => /whisper/.test(eff
 function arriving({ effort, spl, distance, barrier, air, way = {}, boost = 0 }: { effort?: Effort | null; spl?: number | null; distance: number; barrier: string; air?: Air; way?: Way; boost?: number }): number[] {
     const d = Math.max(1, distance), tC = air?.tC ?? 10;
     // A tone puts its energy in its own band; a noise spreads it evenly over the six (pink) [ASSUMED for noise].
-    const tone = way.toneHz ? BANDS.reduce((b, f, i) => Math.abs(Math.log2(f / way.toneHz!)) < Math.abs(Math.log2(BANDS[b] / way.toneHz!)) ? i : b, 0) : -1;
-    const src = effort ? SPEECH[effort].map(x => x + boost) : BANDS.map((_, i) => tone >= 0 ? (i === tone ? (spl ?? 0) - DELTA[i] : -99) : (spl ?? 0) - 10 * Math.log10(6) - DELTA[i]);
+    const src = effort ? SPEECH[effort].map(x => x + boost) : spectrum(spl ?? 0, toneBand(way));
     const shadow = way.room ? null : shadowStart(way, tC);
     // The wave spreads over a sphere (−20 log10 d); the air takes energy per band; the ground's reflection adds or cancels;
     // an obstacle screens (its screening replaces the ground term, ISO 9613-2 §7.4); upward-bent rays leave a shadow; a wall
@@ -176,7 +180,7 @@ export function reach({ effort = 'normal', spl = null, distance = 1, barrier = '
     const boost = spl == null ? lombardDb(effort, nDb) + raise : 0;
     const e = arriving({ effort: spl == null ? effort : null, spl, distance, barrier, air, way, boost });
     // In a room, the late part of the speaker's own sound, the voice as raised, adds to the noise band by band.
-    const src1 = spl == null ? SPEECH[effort].map(x => x + boost) : BANDS.map((_, i) => spl - 10 * Math.log10(6) - DELTA[i]);
+    const src1 = spl == null ? SPEECH[effort].map(x => x + boost) : spectrum(spl, toneBand(way));
     const n = BANDS.map((_, i) => { const b = nDb - 10 * Math.log10(6) - DELTA[i]; return way?.room ? add(b, roomSound(src1[i], way.room).late) : b; });
     if (way?.room) e.forEach((v, i) => { e[i] = add(v, roomSound(src1[i], way.room!).early); });
     let sii = 0, audible = false, best = -Infinity;
@@ -200,7 +204,8 @@ export const BAND_HZ = BANDS;
 /** Whether a sound of overall `spl` dB at 1 m is heard: { audible, margin } with margin = best band peak − disturbance, dB. */
 export function hearSound({ spl, distance = 1, barrier = 'none', noise = 'quiet room (25 dB)', noiseDb = null, shift = 0, deaf = [], air, way }: ReachInput & { spl: number }) {
     const e = arriving({ spl, distance, barrier, air, way });
-    if (way?.room) e.forEach((v, i) => { e[i] = add(v, roomSound(spl - 10 * Math.log10(6) - DELTA[i], way.room!).early); });
+    const src1 = spectrum(spl, toneBand(way));
+    if (way?.room) e.forEach((v, i) => { e[i] = add(v, roomSound(src1[i], way.room!).early); });
     const nDb = noiseDb ?? NOISE[classOf(NOISE, noise) ?? ''] ?? 25;
     let margin = -Infinity;
     e.forEach((ei, i) => {

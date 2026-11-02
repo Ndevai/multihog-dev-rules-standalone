@@ -43,7 +43,7 @@ export function derivedFlash(r: Row): number | null {
 let UF: { subgroups: Record<string, [string, number, number, number]>; a: Record<string, number> } | null = null;
 let ufLoading: Promise<void> | null = null;
 export function loadUnifac(): Promise<void> {
-    ufLoading ??= fetch(new URL('../../rules/unifac.json', import.meta.url)).then(r => r.json()).then(d => { UF = d; });
+    ufLoading ??= fetch(new URL('../../rules/unifac.json', import.meta.url)).then(r => r.json()).then(d => { UF = d; }).catch(e => { ufLoading = null; throw e; });
     return ufLoading;
 }
 /** Activity coefficients of the parts (mole fractions x, groups per part {subgroup id: count}) at T K; null when a group pair

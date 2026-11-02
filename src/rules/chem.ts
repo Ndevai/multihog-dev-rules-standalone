@@ -13,7 +13,7 @@ export function loadChem(): Promise<void> {
     loading ??= Promise.all([loadJoback(), loadUnifac(), fetch(new URL('../../rules/chem.json', import.meta.url)).then(r => r.json())]).then(([, , d]) => {
         DB = d; byName = new Map();
         for (const r of DB!.rows) { byName.set(r.n.toLowerCase(), r); byName.set(r.cas, r); }
-    });
+    }).catch(e => { loading = null; throw e; });
     return loading;
 }
 export const chemRows = () => DB?.rows ?? [];

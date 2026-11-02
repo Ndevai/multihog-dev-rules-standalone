@@ -46,7 +46,7 @@ export function derivedFlash(r) {
 let UF = null;
 let ufLoading = null;
 export function loadUnifac() {
-    ufLoading ??= fetch(new URL('../../rules/unifac.json', import.meta.url)).then(r => r.json()).then(d => { UF = d; });
+    ufLoading ??= fetch(new URL('../../rules/unifac.json', import.meta.url)).then(r => r.json()).then(d => { UF = d; }).catch(e => { ufLoading = null; throw e; });
     return ufLoading;
 }
 /** Activity coefficients of the parts (mole fractions x, groups per part {subgroup id: count}) at T K; null when a group pair

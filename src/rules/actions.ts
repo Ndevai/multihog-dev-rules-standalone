@@ -136,11 +136,11 @@ export function act(st: State, who: string, p: Person, steps: Step[], country: s
  *  github.com/zebrr/Thing-Sandbox): every actor's steps are timed on one clock; the span lasts as long as the slowest; the
  *  merged timeline says who finishes what first. */
 export function actTogether(st: State, actors: { who: string; p: Person; steps: Step[] }[], country: (p: Person) => string | null): { seconds: number; text: string } | { error: string } {
-    const backup = structuredClone({ links: st.links, at: actors.map(a => a.p.at) });
+    const backup = structuredClone({ links: st.links, at: actors.map(a => a.p.at), posture: actors.map(a => a.p.posture) });
     const runs: { who: string; seconds: number; lines: string[]; marks: [number, string][] }[] = [];
     for (const a of actors) {
         const r = act(st, a.who, a.p, a.steps, country(a.p));
-        if ('error' in r) { st.links = backup.links; actors.forEach((x, i) => { x.p.at = backup.at[i]; }); return { error: `${a.who}: ${r.error}` }; }
+        if ('error' in r) { st.links = backup.links; actors.forEach((x, i) => { x.p.at = backup.at[i]; x.p.posture = backup.posture[i]; }); return { error: `${a.who}: ${r.error}` }; }
         runs.push({ who: a.who, ...r });
     }
     const seconds = Math.max(0, ...runs.map(r => r.seconds));

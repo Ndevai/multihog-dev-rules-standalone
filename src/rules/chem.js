@@ -15,7 +15,7 @@ export function loadChem() {
             byName.set(r.n.toLowerCase(), r);
             byName.set(r.cas, r);
         }
-    });
+    }).catch(e => { loading = null; throw e; });
     return loading;
 }
 export const chemRows = () => DB?.rows ?? [];

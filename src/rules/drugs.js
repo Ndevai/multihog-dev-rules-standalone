@@ -5,7 +5,7 @@ export const PULSE_KG = 77.1;
 const COLS = ['hr', 'map', 'sys', 'dia', 'rr', 'spo2', 'tv', 'sed', 'nmb', 'paco2'];
 let TABLE = null, loading = null;
 export function loadDrugs() {
-    loading ??= fetch(new URL('../../rules/pulse/drugs.json', import.meta.url)).then(r => r.json()).then(d => { TABLE = d.drugs; });
+    loading ??= fetch(new URL('../../rules/pulse/drugs.json', import.meta.url)).then(r => r.json()).then(d => { TABLE = d.drugs; }).catch(e => { loading = null; throw e; });
     return loading;
 }
 export const drugKeys = () => Object.keys(TABLE ?? {});
