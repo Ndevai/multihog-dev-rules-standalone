@@ -9,7 +9,7 @@ import { PREFIXED } from './data/wordnet.js';
 import { PREPOSITION } from './grammar.js';
 
 let WORDS: Set<string> | null = null;
-const stems = (w: string): string[] => {
+export const stems = (w: string): string[] => {
     const out = [w];
     const add = (s: string) => { if (s.length >= 2) out.push(s); };
     if (w.endsWith("'s")) add(w.slice(0, -2));

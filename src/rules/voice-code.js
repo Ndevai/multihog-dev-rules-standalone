@@ -140,7 +140,10 @@ export function toNotation(t) {
         }
         if (has('K'))
             core += '-';
-        const pre = `${has('I') ? '.hhh ' : ''}${open}${has('U') ? '↑' : ''}${has('D') ? '↓' : ''}${has('S') ? 'ˈ' : ''}`;
+        // Pitch arrows in the order the player put them: ↑↓ a rise-fall, ↓↑ a fall-rise (two tunes with different uses: Ward &
+        // Hirschberg 1985, Language 61:747, on the fall-rise); the model reads the shape and the context decides its meaning.
+        const pitch = k.codes.filter(c => c === 'U' || c === 'D').map(c => c === 'U' ? '↑' : '↓').join('');
+        const pre = `${has('I') ? '.hhh ' : ''}${open}${pitch}${has('S') ? 'ˈ' : ''}`;
         const pause = k.codes.find(c => /^p/.test(c));
         out += `${lead}${pre}${core}${close}${tail}${has('E') ? ' hhh' : ''}${pause ? ` (${pause.slice(1)})` : ''}`;
     });
@@ -204,7 +207,7 @@ export function typeset(t) {
         const marks = k.codes.map(c => MARK_OF[c]).filter((m) => !!m);
         const f = k.codes.find(c => LINE.test(c)), p = k.codes.find(c => /^p/.test(c));
         if (f)
-            out.push({ text: FEELING_LY[f.slice(2)] ?? f.slice(2), add: 'feeling' }, { text: ' ' });
+            out.push({ text: FEELING_LY[f.slice(2)] ?? f.slice(2), add: 'feeling', ...f.slice(2) in FEELING_LY ? { feeling: f.slice(2) } : {} }, { text: ' ' });
         if (marks.includes('inbreath'))
             out.push({ text: 'inhales', add: 'inhales' }, { text: ' ' });
         const m = WORD_PARTS.exec(k.word);

@@ -6,6 +6,7 @@ A SillyTavern extension where code decides outcomes and the language model narra
 - Each number carries its source in a short comment, or the flag [ASSUMED] (a stated guess) or [RAW] (a value read from data without a published meaning).
 - Register a tool with `tool(name, description, props, required, fn)` and add its name to `TOOLS` in `src/rules/rules-tools.ts`.
 - Runtime data loads with `new URL('../../rules/x.json', import.meta.url)`.
+- Derive; do not look up. A value comes from the deepest layer whose laws can be computed (physics, then tissue, then anatomy, then behaviour), from the fewest causes kept with the thing; everything observable is computed forward from them (few to many). A measured spread stands in only for a cause the story leaves unspecified, and it is drawn at that cause (a tissue's stiffness), never at the outcome (a voice's pitch). Name the layer used and the next one down, and go down when the next one can be computed.
 - Fixed choices are enums or string-literal unions.
 - Comment density matches the surrounding file: one line above a block naming the source and the rule.
 - Tool descriptions and prompts state the wanted behaviour: what the tool decides, when to call it, what it returns.

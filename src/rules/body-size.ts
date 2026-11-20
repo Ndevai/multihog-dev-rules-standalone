@@ -1,6 +1,7 @@
 // Height and body mass of a new character from their country and birth year (docs/df-body-engine.md §6.11).
 import { H_YEARS, B_YEARS, BODY } from './data/body-size.js';
 import type { Gauss } from './types.js';
+import { heightShare, whoAt } from './growth.js';
 
 // Within-population SD of adult height: men 7.59 cm, women 7.07 cm (Jelenkovic et al. 2016, eLife 5:e14627, as given by
 // Our World in Data, "Human Height").
@@ -26,10 +27,13 @@ function at(years: number[], values: number[], y: number): number {
 }
 
 /**
- * { heightCm, massKg, notes } for an adult of `sex` from `country` born in `birthYear`, measured in `year`. Height is drawn
- * around the cohort mean with the SD above; mass = a BMI drawn around the country's mean for that year × height².
+ * { heightCm, massKg, notes } for a person of `sex` from `country` born in `birthYear`, measured in `year`. The adult height
+ * is drawn around the cohort mean with the SD above; mass = a BMI drawn around the country's mean for that year × height².
+ * Under 19 (the WHO reference's end) the height is that adult height's share at their age (growth.ts heightShare, the
+ * person's growth timing `timingZ`) and the BMI the WHO reference's at their age and the same z [ASSUMED: WHO's reference
+ * for every country's children; at 19 the adult draw takes over, so the BMI steps up to the country's adult mean].
  */
-export function bodySize(country: string, sex: string, birthYear: number, year: number, gauss: Gauss, shift = 0): { error: string } | { country: string; heightCm: number; massKg: number; bmiZ: number; notes: string[] } {
+export function bodySize(country: string, sex: string, birthYear: number, year: number, gauss: Gauss, shift = 0, timingZ = 0): { error: string } | { country: string; heightCm: number; massKg: number; bmiZ: number; notes: string[] } {
     const c = findCountry(country);
     if (!c) return { error: `No height data for "${country}".` };
     const s = sex === 'female' ? 1 : 0, [h, b] = BODY[c as keyof typeof BODY];
@@ -43,6 +47,11 @@ export function bodySize(country: string, sex: string, birthYear: number, year: 
     const bmi = at(B_YEARS, b[s], year) * pastBmi(c, year) * Math.exp(bmiZ * sl - sl * sl / 2);
     const notes = [shift ? `height shifted ${Math.round(shift * 10) / 10} cm for births ${birthYear}` : null, birthYear < H_YEARS[0] && !shift || birthYear > H_YEARS[H_YEARS.length - 1] ? `height for births ${birthYear < H_YEARS[0] ? H_YEARS[0] : H_YEARS[H_YEARS.length - 1]}` : null,
         pastBmi(c, year) !== 1 ? `weight from the 1850 American (Fogel) to the 1975 one` : year < B_YEARS[0] || year > B_YEARS[B_YEARS.length - 1] ? `weight for ${year < B_YEARS[0] ? B_YEARS[0] : B_YEARS[B_YEARS.length - 1]}` : null].filter((x): x is string => !!x);
+    const age = year - birthYear;
+    if (age < 19) {
+        const male = s === 0, grown = young * heightShare(male, Math.max(0, age), timingZ), kid = whoAt('bmi', male, Math.max(0, age), bmiZ);
+        return { country: c, heightCm: grown, massKg: kid * (grown / 100) ** 2, bmiZ, notes: [...notes, `growing: ${Math.round(heightShare(male, Math.max(0, age), timingZ) * 1000) / 10} % of an adult height of ${Math.round(young)} cm; BMI from the WHO reference`] };
+    }
     return { country: c, heightCm, massKg: bmi * (young / 100) ** 2, bmiZ, notes };
 }
 

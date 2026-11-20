@@ -168,10 +168,19 @@ const bare = (w: string) => w.replace(/^["“'(]+|[,.;:!?"”')]+$/g, '');
 export function deliveryOf(p: Prosody): string {
     const parts: string[] = [];
     if (p.feeling) parts.push(`feeling: ${p.feeling}`);
+    // A word with both pitch marks carries one tune, named by their order (rise-fall: up first; fall-rise: down first); its
+    // shape is said, not a meaning, so the context decides what it does.
+    const both = (w: Word) => w.marks.includes('up') && w.marks.includes('down');
+    const tune = (w: Word) => w.marks.indexOf('up') < w.marks.indexOf('down') ? 'rise-fall' : 'fall-rise';
+    const has = (w: Word, k: Mark) => w.marks.includes(k) && !((k === 'up' || k === 'down') && both(w));
     for (const k of ORDER) {
         const runs: string[][] = [];
-        p.words.forEach((w, i) => { if (!w.marks.includes(k)) return; if (i > 0 && p.words[i - 1]!.marks.includes(k) && runs.length) runs.at(-1)!.push(bare(w.word)); else runs.push([bare(w.word)]); });
+        p.words.forEach((w, i) => { if (!has(w, k)) return; if (i > 0 && has(p.words[i - 1]!, k) && runs.length) runs.at(-1)!.push(bare(w.word)); else runs.push([bare(w.word)]); });
         if (runs.length) parts.push(`${SAY[k]}${/ (on|before|after|through)$/.test(SAY[k]) ? ' ' : ': '}${runs.map(r => r.join(' ')).join(', ')}`);
+        if (k === 'down') for (const t of ['rise-fall', 'fall-rise']) {
+            const ws = p.words.filter(w => both(w) && tune(w) === t).map(w => bare(w.word));
+            if (ws.length) parts.push(`${t} on ${ws.join(', ')}`);
+        }
     }
     p.words.forEach(w => { if (w.pause) parts.push(`${w.pause < 0.2 ? 'short pause' : `pause ${w.pause} s`} after ${bare(w.word)}`); });
     for (const n of p.notes) parts.push(n);

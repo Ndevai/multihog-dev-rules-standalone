@@ -5,7 +5,7 @@
 // has written an outcome defends it (Zhang et al. 2023), so the questions come before the reply. The narrator still calls
 // tools itself; a call already made here returns the same result (the turn's decision ledger).
 import { turnKey, placeOf, lineOf } from './turn.js';
-import { MAGIC_TOOLS, REGISTRY, fittedTool, sceneTools, storyText, LAST_DRAWS, clearDraws, store, storyTime, setStoryTime, scenePosition, setScenePosition, restoreTurnStart, restoreLineStart, keepResult, keepStart, hasStart, passRanFor, keepPass, keptPass } from './rules-tools.js';
+import { MAGIC_TOOLS, REGISTRY, fittedTool, sceneTools, storyText, LAST_DRAWS, clearDraws, store, storyTime, setStoryTime, setPresent, scenePosition, setScenePosition, restoreTurnStart, restoreLineStart, keepResult, keepStart, hasStart, passRanFor, keepPass, keptPass } from './rules-tools.js';
 import { parseStoryTime, findStoryTime } from './clock.js';
 import { placeIn } from './weather.js';
 import { takeFlags } from './audit-flags.js';
@@ -333,7 +333,7 @@ async function passOnce(chat, sendRaw, tracker = '', choose, ask) {
     const used = new Map(), usedKeys = () => used;
     const markUsed = (c, result) => { const k = subjectOf(c.tool); if (!k || REFUSED.test(result))
         return; (used.get(c.tool) ?? used.set(c.tool, new Set()).get(c.tool)).add(String(c.args[k] ?? c.args.question ?? '')); };
-    const runAll = async (list) => { for (const c of list) {
+    const runAll = async (list) => { setPresent(present, playerName(ctx.name1, tracker)); for (const c of list) {
         await held(Promise.resolve());
         clearDraws();
         const result = String(await REGISTRY.get(c.tool).exec(c.args));
@@ -471,7 +471,7 @@ async function passOnce(chat, sendRaw, tracker = '', choose, ask) {
             const narration = chat.filter(m => !m.is_system && !m.is_user).slice(-2).map(m => String(m.mes ?? ''));
             const lastTargets = s.asked && s.asked.turn !== turn ? s.asked.calls.filter(c => ['BodyStrike', 'Look', 'Communicate'].includes(c.tool) && [c.args.attacker, c.args.viewer, c.args.speaker].includes(player))
                 .map(c => String(c.args.who ?? c.args.target ?? c.args.listener ?? '')) : [];
-            const d = decide(said0, player, people, has, { narration, lastTargets, spot: held(player)?.at ?? null, pronouns: Object.fromEntries((meant?.open ?? []).map(o => [o.pronoun, o.weights])) });
+            const d = decide(said0, player, people, has, { narration, lastTargets, spot: held(player)?.at ?? null, pronouns: Object.fromEntries((meant?.open ?? []).map(o => [o.pronoun, o.weights])) }, Math.random, lineAt == null ? 1 : (ctx.chat ?? [])[lineAt]?.extra?.rulesFaith);
             if (d && 'ask' in d) {
                 const picked = await ask(d.ask.text, d.ask.options.map(o => o.label));
                 if (picked == null) {

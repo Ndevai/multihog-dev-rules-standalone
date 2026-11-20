@@ -8,7 +8,7 @@ import { PREFIXED } from './data/wordnet.js';
 // The prepositions of the grammar (grammar.ts PREPOSITION): Hunspell's dictionaries lack "into" among them.
 import { PREPOSITION } from './grammar.js';
 let WORDS = null;
-const stems = (w) => {
+export const stems = (w) => {
     const out = [w];
     const add = (s) => { if (s.length >= 2)
         out.push(s); };

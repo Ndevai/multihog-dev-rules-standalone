@@ -104,7 +104,10 @@ export function toNotation(t: string): string {
         if (has('R')) { const v = core.search(/[aeiouyAEIOUY](?=[^aeiouyAEIOUY]*$)/); const at = v >= 0 ? v + 1 : core.length; core = `${core.slice(0, at)}::${core.slice(at)}`; }
         if (has('H')) { const v = core.search(/[aeiouAEIOU]/); const at = v >= 0 ? v + 1 : 1; core = `${core.slice(0, at)}(h)${core.slice(at)}`; }
         if (has('K')) core += '-';
-        const pre = `${has('I') ? '.hhh ' : ''}${open}${has('U') ? '↑' : ''}${has('D') ? '↓' : ''}${has('S') ? 'ˈ' : ''}`;
+        // Pitch arrows in the order the player put them: ↑↓ a rise-fall, ↓↑ a fall-rise (two tunes with different uses: Ward &
+        // Hirschberg 1985, Language 61:747, on the fall-rise); the model reads the shape and the context decides its meaning.
+        const pitch = k.codes.filter(c => c === 'U' || c === 'D').map(c => c === 'U' ? '↑' : '↓').join('');
+        const pre = `${has('I') ? '.hhh ' : ''}${open}${pitch}${has('S') ? 'ˈ' : ''}`;
         const pause = k.codes.find(c => /^p/.test(c));
         out += `${lead}${pre}${core}${close}${tail}${has('E') ? ' hhh' : ''}${pause ? ` (${pause.slice(1)})` : ''}`;
     });
@@ -148,7 +151,7 @@ export function notateRequest(data: { messages?: unknown; prompt?: unknown } | n
 
 /** What the chat shows for a run of text with hidden marks: plain text, each marked word with its marks, and the small words
  * the typesetting adds (a pause's dot, "inhales", "exhales", the line's feeling, laughter's "ha", a cut-off's dash). */
-export type Seg = { text: string; marks?: Mark[]; add?: 'pause' | 'micro' | 'inhales' | 'exhales' | 'feeling' | 'ha' | 'cut'; seconds?: number };
+export type Seg = { text: string; marks?: Mark[]; add?: 'pause' | 'micro' | 'inhales' | 'exhales' | 'feeling' | 'ha' | 'cut'; seconds?: number; feeling?: Feeling };
 export function typeset(t: string): Seg[] {
     if (!hasHidden(t)) return [{ text: t }];
     const out: Seg[] = [];
@@ -158,7 +161,7 @@ export function typeset(t: string): Seg[] {
         cursor = k.end;
         const marks = k.codes.map(c => MARK_OF[c]).filter((m): m is Mark => !!m);
         const f = k.codes.find(c => LINE.test(c)), p = k.codes.find(c => /^p/.test(c));
-        if (f) out.push({ text: FEELING_LY[f.slice(2) as Feeling] ?? f.slice(2), add: 'feeling' }, { text: ' ' });
+        if (f) out.push({ text: FEELING_LY[f.slice(2) as Feeling] ?? f.slice(2), add: 'feeling', ...f.slice(2) in FEELING_LY ? { feeling: f.slice(2) as Feeling } : {} }, { text: ' ' });
         if (marks.includes('inbreath')) out.push({ text: 'inhales', add: 'inhales' }, { text: ' ' });
         const m = WORD_PARTS.exec(k.word)!;
         if (m[1]) out.push({ text: m[1] });

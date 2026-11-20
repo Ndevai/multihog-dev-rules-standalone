@@ -32,6 +32,7 @@ export function readingOf(c: Call): string {
         case 'BodyCheck': return `${s(a.who)} tries to ${cut(s(a.task), 56)}${a.share ? ` (${s(a.share).replace(/^(\d+)%.*$/, '$1 %')} of such tries succeed)` : ''}${a.task_kind && a.task_kind !== OWN_KIND ? `, as ${s(a.task_kind)}` : ''}`;
         case 'Chase': return `${s(a.pursuer)} runs after ${s(a.fleeing)}${typeof a.gap_m === 'number' ? `, ${a.gap_m} m behind` : ''}`;
         case 'HoldOn': return `${s(a.who)} holds on${typeof a.load_kg === 'number' ? ` under ${a.load_kg} kg` : ''}`;
+        case 'WorkOut': return `${s(a.who)} works out ${cut(s(a.problem), 40)}${a.kind ? ` (${s(a.kind)})` : ''}${typeof a.seconds === 'number' ? `, ${a.seconds} s` : ''}`;
         case 'SocialResponse': return `${s(a.who)} answers ${s(a.speaker) || s(a.requester_name) || 'the moment'}: ${cut(s(a.situation), 48)}`;
         default: {
             const parts = Object.entries(a).filter(([, v]) => typeof v === 'string' || typeof v === 'number').slice(0, 2).map(([, v]) => cut(s(v), 32));
@@ -52,12 +53,19 @@ export type Kind = 'sight' | 'sound' | 'speech' | 'body' | 'move' | 'mind' | 'ti
 const KIND: Record<string, Kind> = {
     Look: 'sight', Listen: 'sound', Communicate: 'speech', Interpret: 'speech', SocialResponse: 'speech',
     BodyStrike: 'body', BodyCheck: 'body', BodyWound: 'body', BodyTreat: 'body', BodyChoke: 'body', BodyFall: 'body', HoldOn: 'body', BodyIntake: 'body',
-    BodyEnvironment: 'body', BodyContact: 'body', BodyStatus: 'body', BodySize: 'body', Sickness: 'body', Disease: 'body', Dose: 'body', WorkOut: 'body', Battle: 'body',
+    BodyEnvironment: 'body', BodyContact: 'body', BodyStatus: 'body', BodySize: 'body', Sickness: 'body', Disease: 'body', Dose: 'body', Battle: 'body',
     Act: 'move', Chase: 'move', Room: 'move', Layout: 'move', PlaceProfile: 'move',
-    Trust: 'mind', Claim: 'mind', RecordFact: 'mind', Choose: 'mind', RollTheDice: 'mind', CastSpell: 'mind', NewCharacter: 'mind', NameCharacter: 'mind',
+    WorkOut: 'mind', Trust: 'mind', Claim: 'mind', RecordFact: 'mind', Choose: 'mind', RollTheDice: 'mind', CastSpell: 'mind', NewCharacter: 'mind', NameCharacter: 'mind',
     PassTime: 'time', Weather: 'time', Transfer: 'thing', Price: 'thing', Appraise: 'thing', Break: 'thing', Substance: 'thing',
 };
 export const kindOf = (tool: string): Kind => KIND[tool] ?? 'mind';
+/** What the player's character is doing in a call, in the one word the line's name plate shows (src/ui.ts modesOf): the call's
+ * primitive act in the coverage map (docs/df-body-engine.md §11; Schank 1975, Conceptual Information Processing). SPEAK, the
+ * voice making sounds: a Communicate by speech is 'speaking', whoever hears it (acoustics.ts decides that from the level at each
+ * ear). MBUILD, something worked out from what is known: a WorkOut is 'thinking'; no sound leaves the head. A word names what
+ * the body does, so "aloud" and "to oneself" are results of the level, never modes. */
+export type Mode = 'speaking' | 'thinking';
+export const modeOf = (c: Call): Mode | undefined => c.tool === 'Communicate' && c.args.means !== 'gesture' ? 'speaking' : c.tool === 'WorkOut' ? 'thinking' : undefined;
 /** The call in the fewest words that still decide it, for the note's line after its tag: the player's character, who makes
  * every call the note shows, is left out, and the tag says the kind of act. */
 const WORD: Record<string, string> = { whisper: 'whisper', normal: 'say', loud: 'call', shout: 'shout' };
@@ -74,15 +82,16 @@ export function briefOf(c: Call, player: string): string {
         case 'Transfer': return `${s(a.item)} → ${s(a.to)}`;
         case 'BodyCheck': return `${cut(s(a.task), 48)}${a.share ? ` · ${s(a.share).replace(/^(\d+)%.*$/, '$1 %')}` : ''}`;
         case 'HoldOn': return `holding on${typeof a.load_kg === 'number' ? ` · ${a.load_kg} kg` : ''}`;
+        case 'WorkOut': return `${cut(s(a.problem), 40)}${typeof a.seconds === 'number' ? ` · ${a.seconds} s` : ''}`;
         case 'SocialResponse': return `${s(a.speaker) || s(a.requester_name) ? `${s(a.speaker) || s(a.requester_name)}: ` : ''}${cut(s(a.situation), 40)}`;
         default: return Object.entries(a).filter(([k, v]) => (typeof v === 'string' || typeof v === 'number') && v !== player && k !== 'who').slice(0, 2).map(([, v]) => cut(s(v), 32)).join(' · ');
     }
 }
-export interface ReadingItem { text: string; detail: string; kind?: Kind; brief?: string }
-/** The lines for the player's calls this turn, at most four, each with its call for the hover text, its kind and its brief
- * form. */
+export interface ReadingItem { text: string; detail: string; kind?: Kind; brief?: string; mode?: Mode }
+/** The lines for the player's calls this turn, at most four, each with its call for the hover text, its kind, its brief
+ * form and, for speaking and thinking, its mode. */
 export function readingItems(calls: Call[], player: string | null): ReadingItem[] {
     if (!player) return [];
-    return calls.filter(c => byPlayer(c, player)).slice(0, 4).map(c => ({ text: readingOf(c), detail: detailOf(c), kind: kindOf(c.tool), brief: briefOf(c, player) }));
+    return calls.filter(c => byPlayer(c, player)).slice(0, 4).map(c => { const mode = modeOf(c); return { text: readingOf(c), detail: detailOf(c), kind: kindOf(c.tool), brief: briefOf(c, player), ...mode ? { mode } : {} }; });
 }
 export const readingLines = (calls: Call[], player: string | null): string[] => readingItems(calls, player).map(i => i.text);

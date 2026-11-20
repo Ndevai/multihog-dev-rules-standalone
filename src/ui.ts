@@ -21,12 +21,15 @@
 // sentence with its choices linked, nothing focused or highlighted in advance: a choice shown pre-chosen is picked more often
 // (the default effect; Johnson & Goldstein 2003, Science 302:1338).
 import { correctionLine } from './rules/ask.js';
-import { kindOf, type Kind } from './rules/reading.js';
-import { tokens, typeset, CODE, WORD_PARTS } from './rules/voice-code.js';
+import { kindOf, type Kind, type Mode } from './rules/reading.js';
+import { quotedWords } from './rules/quotes.js';
+import { tokens, typeset, visible, CODE, WORD_PARTS } from './rules/voice-code.js';
 import type { Mark } from './rules/prosody.js';
+import { soundOf, loudnessRatio, pauseBeats, quantityOf, HELD_BEATS } from './rules/voice.js';
+import { peek } from './rules/constants.js';
 
 export interface Taken { label: string; others: string[] }
-export interface Act { text: string; detail: string; kind?: Kind; brief?: string }
+export interface Act { text: string; detail: string; kind?: Kind; brief?: string; mode?: Mode }
 /** The note on one player's line; `line` is the text it read, so a line edited since shows no note. */
 export interface ReadingNote { redone?: string | null; taken?: Taken | null; meant?: string[]; acts: Act[]; things: string[]; line?: string; voice?: string | null }
 
@@ -106,6 +109,58 @@ export function notesOf(chat: Msg[]): { index: number; view: NoteView }[] {
     });
 }
 
+// The name plate: after the player's name, what their character is doing in the line, in one English word, so the plate
+// reads as a clause ("Mara speaking", "Mara thinking"), as a visual novel's text box names the speaker and tags the line. The
+// word is the call's primitive act (rules/reading.ts modeOf): it states what the engine decided, and the call is its hover text.
+export interface PlateMode { mode: Mode; title: string }
+/** A line's modes, speaking before thinking, each once. Speaking: a call that makes sounds with the voice, or words in
+ * quotation marks (rules/quotes.ts: what is said in them is speech), also on a line no call was made for. Thinking: a call
+ * that works something out. A note kept before modes were recorded names each call's tool in `detail`. */
+export function modesOf(note: ReadingNote | null | undefined, line: string): PlateMode[] {
+    const of = (a: Act): Mode | undefined => a.mode ?? (/^Communicate: /.test(a.detail) && !/\bmeans gesture\b/.test(a.detail) ? 'speaking' : /^WorkOut: /.test(a.detail) ? 'thinking' : undefined);
+    const call = (m: Mode) => note?.acts.find(a => of(a) === m), said = quotedWords(visible(line));
+    const speaking = call('speaking'), thinking = call('thinking');
+    return [...speaking ? [{ mode: 'speaking' as const, title: speaking.text }] : said ? [{ mode: 'speaking' as const, title: `Said: “${said}”` }] : [],
+        ...thinking ? [{ mode: 'thinking' as const, title: thinking.text }] : []];
+}
+/** The modes of each player's line in the chat; a line edited since its reading keeps only what its own words show. */
+export function platesOf(chat: Msg[]): { index: number; modes: PlateMode[] }[] {
+    return chat.flatMap((m, i) => {
+        if (!m?.is_user) return [];
+        const held = m.extra?.[NOTE_KEY] as ReadingNote | undefined;
+        const modes = modesOf(held && (held.line == null || held.line === m.mes) ? held : null, String(m.mes ?? ''));
+        return modes.length ? [{ index: i, modes }] : [];
+    });
+}
+/** The modes as an element for the name plate: one word each, set as text, the call it rests on as its hover text. */
+export function drawModes(doc: Doc, modes: PlateMode[]): El {
+    const box = doc.createElement('span'); box.className = 'rules-modes';
+    for (const m of modes) { const e = doc.createElement('span'); e.className = `rules-mode rules-mode-${m.mode}`; e.textContent = m.mode; e.title = m.title; box.appendChild(e); }
+    return box;
+}
+
+// The box: one unit of the chat on screen at a time (index.ts showBox). A unit is a stretch of text with one value of
+// [±voiced]: words that leave a mouth as sound, or text that does not. Quoted words are the voiced ones (rules/quotes.ts);
+// SillyTavern's formatting sets them in <q> elements, so a paragraph's parts arrive marked.
+export interface VoiceUnit { said: boolean; from: number; to: number }
+/** A paragraph's parts (its child nodes in order, `said` for quoted words) as units by change of voice: each quoted part is a
+ * unit, the parts between two of them are one unit, and a stretch without a letter or digit (the comma or full stop left
+ * between two quotations) joins the unit before it, or the one after it at the paragraph's start. Ranges are [from, to). */
+export function voiceUnits(parts: { said: boolean; text: string }[]): VoiceUnit[] {
+    const out: VoiceUnit[] = [];
+    let lead = 0;
+    for (let i = 0; i < parts.length;) {
+        let j = i + 1;
+        if (!parts[i]!.said) while (j < parts.length && !parts[j]!.said) j++;
+        const worded = parts[i]!.said || /[\p{L}\p{N}]/u.test(parts.slice(i, j).map(p => p.text).join(''));
+        if (worded) { out.push({ said: parts[i]!.said, from: lead, to: j }); lead = j; }
+        else if (out.length) { out.at(-1)!.to = j; lead = j; }
+        i = j;
+    }
+    // A paragraph with no letter in it (an ellipsis, a rule of dashes) is one unit.
+    return out.length || !parts.length ? out : [{ said: false, from: 0, to: parts.length }];
+}
+
 /** The parts of a document the note uses (a browser's, or a test's stand-in). */
 export interface Doc { createElement(tag: string): El; createTextNode(t: string): El }
 export interface El {
@@ -127,8 +182,10 @@ export function drawNote(doc: Doc, v: NoteView, look: Look, fill: (text: string)
     if (v.taken) sum.appendChild(el('span', 'rules-reading-taken', `${markOf(look.era)} ${v.taken}`));
     // "or…" stays whole when the guess is cut short on a narrow screen: it says other readings are offered.
     if (v.taken && v.alts) sum.appendChild(el('span', 'rules-reading-or', '— or…'));
-    const list = el('span', 'rules-reading-list');
-    for (const r of v.rows) { const item = el('span', 'rules-reading-item'); item.appendChild(tag(r)); item.appendChild(doc.createTextNode(` ${r.text}`)); list.appendChild(item); }
+    // Folded, each kind of step once, in order (the player's review of 2026-11-17: every step on the one line was cut short
+    // with "…"); the steps themselves stand in the opened rows.
+    const list = el('span', 'rules-reading-list'), kinds = new Set<string>();
+    for (const r of v.rows) { if (kinds.has(r.tag)) continue; kinds.add(r.tag); const item = el('span', 'rules-reading-item'); item.appendChild(tag(r)); list.appendChild(item); }
     sum.appendChild(list);
     sum.appendChild(el('span', 'rules-reading-label', 'read as'));
     box.appendChild(sum);
@@ -244,12 +301,118 @@ export function mirrorParts(text: string): { text: string; family?: Family; titl
     if (text.endsWith('\n')) out.push({ text: '\u200b' });
     return out;
 }
+/** A word's pitch marks in the order given: 'up', 'down', 'updown' (rise-fall) or 'downup' (fall-rise); '' for none. */
+export const pitchOf = (marks: Mark[]) => marks.filter(m => m === 'up' || m === 'down').join('');
+
+// The multiple-distinctions look takes its sizes from the sound of each mark (rules/voice.ts), so a size states a quantity.
+// Each part of the voice has a place of its own around the word: above it the melody, in its letters the loudness, under it
+// the phonation, along the line the time, at the message's edge the feeling.
+// Time runs along the line: the further time a syllable takes (1 ÷ rate − 1) widens the gaps between the words and, less,
+// the letters, as slower speech is mostly more pausing (Goldman-Eisler 1968, as Trouvain 2004, Phonus 8, quotes her); a
+// faster word also leans forward, since letters can close up by little before they touch, and a half-size width step is
+// recognized by 55 % of readers against 78 % for the full one (Bessemans et al. 2019, Visible Language 53.3).
+// Loudness is the word's ink: its weight and size rise and its opacity falls with how many times as loud the level sounds
+// (voice.ts loudnessRatio). The three vary together because cues that vary together are told apart better than one alone
+// (4.1 against about 2.7 bits for size, brightness and hue varied together or one at a time: Eriksen, as Miller 1956,
+// Psychol Rev 63:81, reports).
+// The gains and bounds below are [ASSUMED] for legibility: TRACK_EM and GAP_EM, em per unit of further time, keep letter
+// spacing near the standard, where reading is fastest (Yu, Cheung, Legge & Chung 2007, J Vis 7(2):2: 25 % slower at twice
+// the standard spacing), and GAP_MIN_EM keeps the space that parts two faster words; INK_FLOOR is the lowest opacity at
+// which SillyTavern's shipped themes keep 4.5:1 (WCAG 1.4.3; tests/ui.test.mjs R32); the SIZE bounds keep a whisper at
+// 12 px or more of a 15 px line.
+const TRACK_EM = 0.08, GAP_EM = 0.3, GAP_MIN_EM = -0.03, LEAN_DEG = 50, PITCH_EM = 0.05, PITCH_MAX_EM = 0.36;
+const BASE_WEIGHT = 500, WEIGHT_MIN = 300, WEIGHT_MAX = 900, INK_POWER = 0.37, INK_FLOOR = 0.78, SIZE_POWER = 0.27, SIZE_MIN = 0.82, SIZE_MAX = 1.12;
+/** The look's sizes as CSS custom properties (name without the leading --rules-, unitless value): index.ts sets them on the
+ * page, and style.css holds the same values as fallbacks (tests/ui.test.mjs R32 keeps the two equal). */
+export function lookVars(): Record<string, number> {
+    const time = (m: Mark) => 1 / soundOf([m]).rate - 1, loud = (m: Mark) => loudnessRatio(soundOf([m]).db);
+    const r = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d, clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
+    const weight = (l: number) => Math.round(clamp(BASE_WEIGHT * l, WEIGHT_MIN, WEIGHT_MAX)), ink = (l: number) => r(clamp(l ** INK_POWER, INK_FLOOR, 1), 2), size = (l: number) => r(clamp(l ** SIZE_POWER, SIZE_MIN, SIZE_MAX), 2);
+    return {
+        'fast-track': r(TRACK_EM * time('fast'), 3), 'slow-track': r(TRACK_EM * time('slow'), 3), 'fast-gap': r(Math.max(GAP_MIN_EM, GAP_EM * time('fast')), 3), 'slow-gap': r(GAP_EM * time('slow'), 3),
+        'fast-lean': r(LEAN_DEG * time('fast'), 1),
+        'loud-weight': weight(loud('loud')), 'quiet-weight': weight(loud('quiet')), 'whisper-weight': weight(loud('whisper')),
+        'loud-size': size(loud('loud')), 'quiet-size': size(loud('quiet')), 'whisper-size': size(loud('whisper')),
+        'quiet-ink': ink(loud('quiet')), 'whisper-ink': ink(loud('whisper')),
+        'pitch-rise': r(Math.min(PITCH_MAX_EM, PITCH_EM * peek('voicePitchSemitones')), 2),
+    };
+}
+
+const VOWEL = /[aeiouyAEIOUY](?=[^aeiouyAEIOUY]*$)/;
+/** A drawn-out word in parts: up to and with its last vowel (the one toNotation stretches), that vowel written again once per
+ * further beat it is held ("Nooo", "NOOO"; "Oh" is held as "Oooh"), as writers lengthen a word, and the rest; null for a
+ * word without a vowel. */
+export function heldParts(word: string): { head: string; again: string; tail: string } | null {
+    const v = word.search(VOWEL);
+    if (v < 0) return null;
+    const vowel = word.charAt(v), letters = word.replace(/[^\p{L}]/gu, '');
+    return { head: word.slice(0, v + 1), again: (letters.length > 1 && letters === letters.toUpperCase() ? vowel : vowel.toLowerCase()).repeat(HELD_BEATS), tail: word.slice(v + 1) };
+}
+/** The marks drawn over a run of words as one (its ink, and the rule under it): a softer or whispered voice and the phonation.
+ * Words side by side with the same ones stand in one span (class rules-run), so the rule runs on under the spaces. */
+export const RUN_MARKS: Mark[] = ['quiet', 'creaky', 'breathy', 'whisper'];
+const runOf = (marks: Mark[]) => RUN_MARKS.filter(m => marks.includes(m)).join(' ');
 /** The chat's typesetting of a run of text with hidden marks (voice-code.ts typeset) as elements: each marked word a span with
- * a class per mark and its marks named on hover, the small added words (a pause's dot, "inhales", the feeling) muted. */
+ * a class per mark, its marks and their quantities named on hover (voice.ts quantityOf), the small added words (a pause's dot,
+ * "inhales", the feeling) muted. For the multiple-distinctions look (style.css, body.rules-distinct) a word also carries its
+ * pitch order (data-pitch); a stressed word has the IPA stress mark before it; a drawn-out word has its last vowel (the one
+ * toNotation stretches) in a span of its own and written again once per further beat; a timed pause has a dot per syllable of
+ * silence beside its dash; the space between two words that are both faster or both slower is a span, so the gap takes the
+ * tempo; words side by side that share a softer voice or a phonation stand in one span (rules-run); the feeling carries its
+ * name (data-feeling). The plain look hides what the other look adds. */
 export function drawVoice(doc: Doc, text: string): El[] {
-    return typeset(text).map(seg => {
-        if (seg.add) { const e = doc.createElement('span'); e.className = `rules-v-add rules-v-add-${seg.add}`; e.textContent = seg.text; if (seg.add === 'micro' || seg.add === 'pause') e.title = seg.add === 'micro' ? 'short pause' : seg.seconds === 0.5 ? 'pause, half a second' : `pause, ${seg.seconds} s`; return e; }
-        if (seg.marks?.length) { const e = doc.createElement('span'); e.className = ['rules-v', ...seg.marks.map(m => `rules-v-${m}`)].join(' '); e.textContent = seg.text; e.title = seg.marks.map(m => MARK_NAME[m] ?? m).join(', '); return e; }
-        return doc.createTextNode(seg.text);
+    const segs = typeset(text);
+    // The tempo two neighbouring words share, for the space between them: only spaces and punctuation lie between the two.
+    const word = (from: number, step: number) => { for (let i = from + step; i >= 0 && i < segs.length; i += step) { const s = segs[i]!; if (s.marks) return s.marks; if (s.add || /\s/.test(s.text)) return null; } return null; };
+    const tempoOf = (ms: Mark[] | null) => !ms || ms.includes('slow') === ms.includes('fast') ? null : ms.includes('slow') ? 'slow' : 'fast';
+    const drawn = segs.map((seg, i): El[] => {
+        if (seg.add) {
+            const e = doc.createElement('span'); e.className = `rules-v-add rules-v-add-${seg.add}`; e.textContent = seg.text;
+            if (seg.add === 'micro' || seg.add === 'pause') e.title = seg.add === 'micro' ? 'short pause' : seg.seconds === 0.5 ? 'pause, half a second' : `pause, ${seg.seconds} s`;
+            if (seg.feeling) e.setAttribute('data-feeling', seg.feeling);
+            if (seg.add !== 'pause') return [e];
+            // The silence in the syllables it would have held: time along the line, apart from a cut-off's dash.
+            const rest = doc.createElement('span'); rest.className = 'rules-v-add rules-v-add-rest'; rest.textContent = ` ${'·'.repeat(pauseBeats(seg.seconds ?? 0))}`; rest.title = e.title;
+            return [e, rest];
+        }
+        if (!seg.marks?.length) {
+            const tempo = !seg.marks && /^ +$/.test(seg.text) ? tempoOf(word(i, -1)) : null;
+            if (!tempo || tempo !== tempoOf(word(i, 1))) return [doc.createTextNode(seg.text)];
+            const gap = doc.createElement('span'); gap.className = `rules-v-gap rules-v-gap-${tempo}`; gap.textContent = seg.text;
+            return [gap];
+        }
+        const e = doc.createElement('span'); e.className = ['rules-v', ...seg.marks.map(m => `rules-v-${m}`)].join(' ');
+        e.title = seg.marks.map(m => { const q = quantityOf(m); return `${MARK_NAME[m] ?? m}${q ? ` (${q})` : ''}`; }).join(', ');
+        const pitch = pitchOf(seg.marks);
+        if (pitch) e.setAttribute('data-pitch', pitch);
+        const parts = seg.marks.includes('stretch') ? heldParts(seg.text) : null;
+        if (!parts) e.textContent = seg.text;
+        else {
+            // The vowel in a span of its own, then written again: the added letters are the typesetting's, so a copied line
+            // keeps the player's spelling.
+            const long = doc.createElement('span'); long.className = 'rules-v-long'; long.textContent = parts.head.slice(-1);
+            const held = doc.createElement('span'); held.className = 'rules-v-add rules-v-add-held'; held.textContent = parts.again;
+            if (parts.head.length > 1) e.appendChild(doc.createTextNode(parts.head.slice(0, -1)));
+            e.appendChild(long); e.appendChild(held);
+            if (parts.tail) e.appendChild(doc.createTextNode(parts.tail));
+        }
+        if (!seg.marks.includes('stress')) return [e];
+        // The IPA's stress mark before the word (IPA chart: ˈ primary stress).
+        const tick = doc.createElement('span'); tick.className = 'rules-v-add rules-v-add-tick'; tick.textContent = 'ˈ';
+        return [tick, e];
     });
+    // Runs: from a word to the last word after it with the same run marks, every word between having them too; what lies
+    // between the words (spaces, punctuation, a pause) is inside, what follows the last word is outside.
+    const out: El[] = [];
+    for (let i = 0; i < segs.length; i++) {
+        const run = segs[i]!.marks ? runOf(segs[i]!.marks!) : '';
+        if (!run) { out.push(...drawn[i]!); continue; }
+        let end = i;
+        for (let j = i + 1; j < segs.length; j++) { const ms = segs[j]!.marks; if (!ms) continue; if (runOf(ms) !== run) break; end = j; }
+        const span = doc.createElement('span'); span.className = ['rules-run', ...run.split(' ').map(m => `rules-run-${m}`)].join(' ');
+        for (let j = i; j <= end; j++) for (const e of drawn[j]!) span.appendChild(e);
+        out.push(span);
+        i = end;
+    }
+    return out;
 }

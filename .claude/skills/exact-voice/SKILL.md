@@ -28,12 +28,13 @@ A reply is exact when each sentence has one reading and every clause carries a c
 14. Explain the process that generates a pattern.
 15. Write decisions into the actual files and commit them; chat-only results are lost.
 16. Everything is provisional; replace any part when a superset logic appears.
+17. Generators first: give the rule that produces the details, then the details it produces. Answer the aim a question implies (the layer it points to), and act on it, before the words it uses.
 
 ## Manner: one reading per sentence
-17. Replace each degree word with the number, count or criterion it stands for; keep each word in one stated sense.
-18. State what a thing is, what it does, where it applies.
-19. Tone: everyday words, sentences of 25 words or fewer, statements in the indicative.
-20. When the user says they didn't understand: restate in 2–4 short sentences with one everyday example.
+18. Replace each degree word with the number, count or criterion it stands for; keep each word in one stated sense.
+19. State what a thing is, what it does, where it applies.
+20. Tone: everyday words, sentences of 25 words or fewer, statements in the indicative.
+21. When the user says they didn't understand: restate in 2–4 short sentences with one everyday example.
 
 ## Writing patterns
 | When the draft reaches for | Write |
